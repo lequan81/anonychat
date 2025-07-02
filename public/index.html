@@ -18,6 +18,10 @@
       font-family: 'Maple Mono', monospace !important;
     }
   </style>
+  <audio id="connect-sound" src="/sounds/activity.mp3" preload="auto"></audio>
+  <audio id="disconnect-sound" src="/sounds/activity.mp3" preload="auto"></audio>
+  <audio id="send-sound" src="/sounds/message.mp3" preload="auto"></audio>
+  <audio id="receive-sound" src="/sounds/message.mp3" preload="auto"></audio>
 </head>
 
 <body class="bg-gray-900 text-white flex items-center justify-center h-screen font-[Maple Mono]">
@@ -41,6 +45,18 @@
     ws.onmessage = (e) => {
       let msg;
       try { msg = JSON.parse(e.data); } catch { msg = { system: e.data }; }
+
+
+      if (msg.system?.includes('Connected to a stranger')) {
+        document.getElementById('connect-sound')?.play();
+      }
+      if (msg.system?.includes('disconnected')) {
+        document.getElementById('disconnect-sound')?.play();
+      }
+      if (msg.type === 'text') {
+        const soundId = msg.from === 'self' ? 'send-sound' : 'receive-sound';
+        document.getElementById(soundId)?.play();
+      }
 
       if (msg.type === 'text') {
         const isMine = msg.data === lastSent;
