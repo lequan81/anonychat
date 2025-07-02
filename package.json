@@ -1,0 +1,12 @@
+{
+  "name": "anonychat",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "author": "Phi Truong <Nguyenairport56@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^5.1.0",
+    "ws": "^8.18.3"
+  }
+}
