@@ -17,6 +17,26 @@
     * {
       font-family: 'Maple Mono', monospace !important;
     }
+
+    /* Hide scrollbar for Chrome, Safari and Opera */
+    #log::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    #log::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    #log::-webkit-scrollbar-thumb {
+      background-color: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+    }
+
+    /* Firefox */
+    #log {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+    }
   </style>
   <audio id="connect-sound" src="/sounds/activity.mp3" preload="auto"></audio>
   <audio id="disconnect-sound" src="/sounds/activity.mp3" preload="auto"></audio>
@@ -41,6 +61,7 @@
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
 
     let lastSent = "";
+    let isConnected = false;
 
     ws.onmessage = (e) => {
       let msg;
@@ -48,9 +69,11 @@
 
 
       if (msg.system?.includes('Connected to a stranger')) {
+        isConnected = true;
         document.getElementById('connect-sound')?.play();
       }
       if (msg.system?.includes('disconnected')) {
+        isConnected = false;
         document.getElementById('disconnect-sound')?.play();
       }
       if (msg.type === 'text') {
@@ -86,7 +109,11 @@
     };
 
     let typingTimeout;
-    const sendTyping = () => ws.send(JSON.stringify({ type: 'typing' }));
+    const sendTyping = () => {
+      if (ws.readyState === WebSocket.OPEN && isConnected) {
+        ws.send(JSON.stringify({ type: 'typing' }))
+      }
+    };
     const debounceTyping = () => {
       clearTimeout(typingTimeout);
       typingTimeout = setTimeout(sendTyping, 300);
@@ -95,7 +122,9 @@
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && input.value.trim()) {
         lastSent = input.value;
-        ws.send(JSON.stringify({ type: 'text', data: input.value }));
+        if (ws.readyState === WebSocket.OPEN && isConnected) {
+          ws.send(JSON.stringify({ type: 'text', data: input.value }));
+        }
         input.value = '';
       } else {
         debounceTyping();
