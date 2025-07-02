@@ -34,7 +34,7 @@
     const log = document.getElementById('log');
     const typingEl = document.getElementById('typing');
     const input = document.getElementById('msg');
-    const ws = new WebSocket(`ws://${location.host}`);
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
 
     let lastSent = "";
 
