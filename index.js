@@ -1,4 +1,3 @@
-// server.js
 import express from 'express';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
@@ -8,18 +7,30 @@ import chatLogger from './logger.js';
 const app = express();
 app.use(express.static('public'));
 
-// global express logger show method and request URI
-app.use((req, res, next) => {
-  console.log(`[${req.method}] ${req.url}`);
-  next();
-});
-
-
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
 const waiting = [];
 const connections = new Set();
+
+function broadcastStats() {
+  const stats = {
+    type: 'stats',
+    onlineCount: connections.size,
+    waitingUsers: waiting.length,
+    activePairs: Math.floor((connections.size - waiting.length) / 2)
+  };
+
+  connections.forEach(ws => {
+    if (ws.readyState === ws.OPEN) {
+      try {
+        ws.send(JSON.stringify(stats));
+      } catch (error) {
+        console.log('Error broadcasting stats:', error);
+      }
+    }
+  });
+}
 
 function cleanupWaiting() {
   const initialLength = waiting.length;
@@ -33,6 +44,7 @@ function cleanupWaiting() {
   if (removed > 0) {
     chatLogger.cleanupPerformed(removed);
     chatLogger.updateStats({ waitingUsers: waiting.length });
+    broadcastStats();
   }
 }
 
@@ -96,6 +108,9 @@ function disconnect(ws) {
     waitingUsers: waiting.length,
     activePairs: Math.floor((connections.size - waiting.length) / 2)
   });
+
+  // Broadcast updated stats
+  broadcastStats();
 }
 
 wss.on('connection', (ws) => {
@@ -104,6 +119,14 @@ wss.on('connection', (ws) => {
   ws.isAlive = true;
 
   chatLogger.userConnected(ws.id);
+
+  // Send initial stats to new connection
+  safeSend(ws, {
+    type: 'stats',
+    onlineCount: connections.size,
+    waitingUsers: waiting.length,
+    activePairs: Math.floor((connections.size - waiting.length) / 2)
+  });
 
   // Clean up dead connections before pairing
   cleanupWaiting();
@@ -148,6 +171,9 @@ wss.on('connection', (ws) => {
     activePairs: Math.floor((connections.size - waiting.length) / 2)
   });
 
+  // Broadcast updated stats
+  broadcastStats();
+
   ws.on('message', (data) => {
     ws.isAlive = true;
 
@@ -164,10 +190,35 @@ wss.on('connection', (ws) => {
       return;
     }
 
+    // Handle delivery receipts
+    if (msg.type === 'receipt') {
+      safeSend(ws.partner, {
+        type: 'receipt',
+        messageId: msg.messageId
+      });
+      return;
+    }
+
     if (msg.type === 'text' && msg.data) {
+      const messageId = msg.id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
       chatLogger.messageSent(ws.id, ws.partner.id, msg.data.length);
-      safeSend(ws, { type: 'text', data: msg.data, from: 'self' });
-      safeSend(ws.partner, { type: 'text', data: msg.data, from: 'stranger' });
+      
+      // Send to sender with message ID
+      safeSend(ws, { 
+        type: 'text', 
+        data: msg.data, 
+        from: 'self',
+        id: messageId
+      });
+      
+      // Send to partner with message ID
+      safeSend(ws.partner, { 
+        type: 'text', 
+        data: msg.data, 
+        from: 'stranger',
+        id: messageId
+      });
     }
 
     if (msg.type === 'typing') {
@@ -218,11 +269,17 @@ const cleanup = setInterval(() => {
   cleanupWaiting();
 }, 60000); // Clean every minute
 
+// Stats broadcast interval
+const statsBroadcast = setInterval(() => {
+  broadcastStats();
+}, 10000); // Broadcast every 10 seconds
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
   chatLogger.serverStopped();
   clearInterval(heartbeat);
   clearInterval(cleanup);
+  clearInterval(statsBroadcast);
   server.close();
 });
 
@@ -230,12 +287,14 @@ process.on('SIGINT', () => {
   chatLogger.serverStopped();
   clearInterval(heartbeat);
   clearInterval(cleanup);
+  clearInterval(statsBroadcast);
   server.close();
 });
 
 wss.on('close', () => {
   clearInterval(heartbeat);
   clearInterval(cleanup);
+  clearInterval(statsBroadcast);
 });
 
 const PORT = process.env.PORT || 3000;
