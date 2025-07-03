@@ -141,7 +141,7 @@ const ChatLog = ({ messages }) => {
   return (
     <div 
       ref={logRef}
-      className="flex-1 overflow-y-auto bg-gray-700 rounded-lg p-2 md:p-3 text-sm space-y-1 min-h-64 md:min-h-96 md:h-80 lg:h-96"
+      className="flex-1 overflow-y-auto bg-gray-700 rounded-lg p-2 md:p-3 text-sm space-y-1 min-h-64 md:max-h-100 md:min-h-96 md:h-80 lg:h-96"
       style={{
         scrollbarWidth: 'thin',
         scrollbarColor: 'rgba(255, 255, 255, 0.1) transparent'
