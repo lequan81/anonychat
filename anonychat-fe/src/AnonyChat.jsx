@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 const useAudio = () => {
   const audioRefs = useRef({
@@ -96,7 +96,7 @@ const useWebSocket = (playSound) => {
         websocket.close();
       }
     };
-  });
+  }, []);
 
   const sendMessage = (data) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
