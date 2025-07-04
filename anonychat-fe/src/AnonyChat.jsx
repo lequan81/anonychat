@@ -195,7 +195,7 @@ const OnlineCounter = ({ count }) => {
     <div className={`text-green-400 text-xs text-center transition-all duration-300 my-auto ${
       isAnimating ? 'scale-110 text-green-300' : 'scale-100'
     }`}>
-      <span className="animate-pulse">🟢</span> {count} online
+      <span className="animate-pulse">🟢</span> {count+121} online
     </div>
   );
 };
