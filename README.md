@@ -25,8 +25,9 @@ public/
   ├── index.html
   └── fonts/MapleMono.ttf
 ```
+
 ## Fonts
 
 Thanks for the authors of Maple Mono fonts
 
-https://github.com/subframe7536/maple-font
+<https://github.com/subframe7536/maple-font>

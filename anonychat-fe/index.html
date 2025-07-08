@@ -1,13 +1,83 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Comment line below due to no icon avaiable, may change in future -->
+    <!-- <link rel="icon" type="image/svg+xml" href="/vite.svg" /> -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no"
+    />
+    <style>
+      html,
+      body {
+        max-width: 100vw;
+        overflow-x: hidden;
+        touch-action: pan-y;
+      }
+    </style>
     <title>AnonyChat</title>
+    <!-- Preloading assets for better UX -->
+    <link
+      rel="preload"
+      href="/fonts/MapleMono.woff2"
+      as="font"
+      type="font/woff2"
+      fetchpriority="low"
+      crossorigin
+    />
   </head>
-  <body>
+  <body class="touch-pan-y max-w-dvw overflow-x-hidden">
+    <div
+      id="global-loader"
+      style="
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.3);
+      "
+    >
+      <div
+        style="
+          width: 2rem;
+          height: 2rem;
+          border: 2px solid #a78bfa;
+          border-top-color: transparent;
+          border-radius: 9999px;
+          animation: spin 1s linear infinite;
+        "
+      ></div>
+    </div>
     <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <script>
+      // Remove loader when React is ready
+      window.addEventListener('DOMContentLoaded', function () {
+        const root = document.getElementById('root');
+        if (root) {
+          const observer = new MutationObserver(() => {
+            if (root.childElementCount > 0) {
+              const loader = document.getElementById('global-loader');
+              if (loader) loader.remove();
+              observer.disconnect();
+            }
+          });
+          observer.observe(root, { childList: true });
+        }
+      });
+    </script>
+    <script
+      type="module"
+      src="/src/main.jsx"
+    ></script>
+    <style>
+      /* @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      } */
+    </style>
   </body>
 </html>

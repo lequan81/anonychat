@@ -1,0 +1,21 @@
+@import 'tailwindcss';
+
+@font-face {
+  font-family: 'Maple Mono';
+  src: url('/fonts/MapleMono.woff2') format('woff2'), url('/fonts/MapleMono.woff') format('woff'),
+    url('/fonts/MapleMono.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+/*
+html {
+  max-width: 100vw;
+  overflow-x: hidden;
+  touch-action: pan-y;
+} */
+
+body {
+  font-family: 'Maple Mono', monospace;
+  font-display: swap;
+}
