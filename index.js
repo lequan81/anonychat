@@ -1,13 +1,21 @@
 import express from 'express';
 import { createServer } from 'http';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+import path from 'node:path';
 import { WebSocketServer } from 'ws';
 import { v4 as uuid } from 'uuid';
 import chatLogger from './logger.js';
 import { appendMessageLog } from './messageLog.js';
-import { appendFeedbackLog } from './feedbackLog.js';
+import { appendFeedbackLog, readRecentFeedback } from './feedbackLog.js';
 
 const app = express();
-app.use(express.static('public'));
+const publicDirectory = path.resolve('public');
+app.use(express.json({ limit: '16kb' }));
+app.use(express.static(publicDirectory));
+app.use('/api/admin', (request, response, next) => {
+  response.set('Cache-Control', 'no-store');
+  next();
+});
 
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 7 * 1024 * 1024 });
@@ -39,6 +47,103 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_FEEDBACK_LENGTH = 2000;
 const MAX_FEEDBACK_USERNAME_LENGTH = 80;
 const FEEDBACK_COOLDOWN_MS = 60 * 1000;
+const MAX_ADMIN_ANNOUNCEMENT_LENGTH = 1000;
+const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const adminSessions = new Map();
+
+function isAdminPasswordValid(password) {
+  const configuredPassword = process.env.ADMIN_PASSWORD;
+  if (typeof configuredPassword !== 'string' || !configuredPassword) return false;
+
+  const supplied = Buffer.from(password);
+  const expected = Buffer.from(configuredPassword);
+  return supplied.length === expected.length && timingSafeEqual(supplied, expected);
+}
+
+function getAdminSession(request) {
+  const authorization = request.get('authorization') ?? '';
+  const match = /^Bearer ([a-f0-9]{64})$/.exec(authorization);
+  if (!match) return null;
+
+  const expiresAt = adminSessions.get(match[1]);
+  if (!expiresAt) return null;
+  if (expiresAt <= Date.now()) {
+    adminSessions.delete(match[1]);
+    return null;
+  }
+  return match[1];
+}
+
+app.post('/api/admin/login', (request, response) => {
+  if (!process.env.ADMIN_PASSWORD) {
+    response.status(503).json({ error: 'Trang admin chưa được cấu hình trên server.' });
+    return;
+  }
+  if (typeof request.body?.password !== 'string' || !isAdminPasswordValid(request.body.password)) {
+    response.status(401).json({ error: 'Mật khẩu admin không đúng.' });
+    return;
+  }
+
+  const now = Date.now();
+  for (const [token, expiresAt] of adminSessions) {
+    if (expiresAt <= now) adminSessions.delete(token);
+  }
+
+  const token = randomBytes(32).toString('hex');
+  adminSessions.set(token, now + ADMIN_SESSION_TTL_MS);
+  response.json({ token, expiresInSeconds: ADMIN_SESSION_TTL_MS / 1000 });
+});
+
+app.post('/api/admin/announcements', (request, response) => {
+  if (!getAdminSession(request)) {
+    response.status(401).json({ error: 'Phiên admin đã hết hạn. Vui lòng đăng nhập lại.' });
+    return;
+  }
+
+  const message = typeof request.body?.message === 'string' ? request.body.message.trim() : '';
+  if (!message || message.length > MAX_ADMIN_ANNOUNCEMENT_LENGTH) {
+    response.status(400).json({
+      error: `Thông báo phải dài từ 1 đến ${MAX_ADMIN_ANNOUNCEMENT_LENGTH} ký tự.`
+    });
+    return;
+  }
+
+  let recipientCount = 0;
+  connections.forEach((ws) => {
+    if (safeSend(ws, { type: 'announcement', message })) recipientCount++;
+  });
+  response.json({ recipientCount });
+});
+
+app.get('/api/admin/feedback', async (request, response) => {
+  if (!getAdminSession(request)) {
+    response.status(401).json({ error: 'Phiên admin đã hết hạn. Vui lòng đăng nhập lại.' });
+    return;
+  }
+
+  try {
+    const feedback = await readRecentFeedback();
+    response.json({ feedback });
+  } catch (error) {
+    chatLogger.connectionError('admin-feedback', error);
+    response.status(500).json({ error: 'Không thể tải góp ý lúc này.' });
+  }
+});
+
+app.delete('/api/admin/session', (request, response) => {
+  const token = getAdminSession(request);
+  if (!token) {
+    response.status(401).json({ error: 'Phiên admin đã hết hạn.' });
+    return;
+  }
+
+  adminSessions.delete(token);
+  response.status(204).end();
+});
+
+app.get('/admin', (request, response) => {
+  response.sendFile(path.join(publicDirectory, 'index.html'));
+});
 
 function decodeImageData(data) {
   const match = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/.exec(data);

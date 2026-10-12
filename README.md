@@ -38,11 +38,14 @@ docker run --name anonychat --init --restart unless-stopped \
 
 The Dockerfile uses separate cached stages for frontend dependencies, the Vite build, and production server dependencies. The final image contains only the built frontend and production server dependencies, runs as the unprivileged `node` user, and reports container health through `/healthz`. Keep `/app/logs` on a persistent volume if application logs or feedback submissions must survive container replacement. Message-content logging is enabled by the application by default; disable it as shown above if plaintext conversation logs are not wanted. Configure `RECONNECT_GRACE_SECONDS` and `PAIR_REMATCH_COOLDOWN_SECONDS` with `-e` as needed.
 
+The admin console is available at `/admin`. Set a strong `ADMIN_PASSWORD` environment variable in the server or container deployment configuration to enable admin login; without it, admin login is disabled. After logging in, an admin can broadcast a system announcement to currently connected users and read feedback users have submitted. The console does not open a chat connection or expose private conversation messages. Admin sessions expire after eight hours. Keep the password in deployment secrets and serve the console over HTTPS.
+
 Set `RECONNECT_GRACE_SECONDS` to change how long a disconnected chat session is kept. It defaults to `30` and must be a positive integer. The chat timeline shows a countdown using this server setting while reconnecting. In PowerShell, for example:
 
 ```powershell
 $env:RECONNECT_GRACE_SECONDS = "60"
 $env:PAIR_REMATCH_COOLDOWN_SECONDS = "15"
+$env:ADMIN_PASSWORD = (Read-Host "Admin password")
 node index.js
 ```
 

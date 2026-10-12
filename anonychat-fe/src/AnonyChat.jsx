@@ -124,6 +124,14 @@ const useWebSocket = (playSound) => {
           reconnectGraceRef.current = msg.reconnectGraceSeconds;
         }
 
+        if (msg.type === 'announcement' && typeof msg.message === 'string') {
+          setMessages((prev) => [
+            ...prev.filter((item) => item.type !== 'typing'),
+            { announcement: msg.message, timestamp: Date.now() }
+          ]);
+          return;
+        }
+
         if (msg.type === 'stats' && msg.onlineCount !== undefined) {
           setOnlineCount(msg.onlineCount);
         }
@@ -659,7 +667,12 @@ const ChatLog = ({ messages, isUserConnected, onReact }) => {
         <div className="space-y-2">
           {messages.map((msg, idx) => (
             <div key={msg.index ?? msg.id ?? `${msg.timestamp}-${idx}`}>
-              {msg.system ? (
+              {msg.announcement ? (
+                <>
+                  <SystemMessage message={{ system: `[ADMIN] ${msg.announcement}`, timestamp: msg.timestamp }} />
+                  <SystemMessage message={{ system: 'Admin chỉ gửi thông báo này và không thể biết bạn đang nhắn gì.', timestamp: msg.timestamp }} />
+                </>
+              ) : msg.system ? (
                 <SystemMessage message={msg} />
               ) : msg.type === 'typing' ? (
                 <TypingBubble />
@@ -1109,7 +1122,7 @@ const ChatContainer = ({ children }) => (
   </div>
 );
 
-const AnonyChat = () => {
+const ChatApp = () => {
   const { playSound } = useAudio();
   const {
     isUserConnected,
@@ -1400,5 +1413,254 @@ const AnonyChat = () => {
     </div>
   );
 };
+
+const AdminConsole = () => {
+  const [password, setPassword] = useState('');
+  const [token, setToken] = useState('');
+  const [message, setMessage] = useState('');
+  const [feedbackEntries, setFeedbackEntries] = useState([]);
+  const [isFeedbackLoading, setIsFeedbackLoading] = useState(false);
+  const [feedbackError, setFeedbackError] = useState('');
+  const [status, setStatus] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const loadFeedback = async (adminToken) => {
+    setIsFeedbackLoading(true);
+    setFeedbackError('');
+    try {
+      const response = await fetch('/api/admin/feedback', {
+        headers: { Authorization: `Bearer ${adminToken}` }
+      });
+      const result = await response.json();
+      if (response.status === 401) setToken('');
+      if (!response.ok) throw new Error(result.error || 'Không thể tải góp ý.');
+      setFeedbackEntries(result.feedback);
+    } catch (error) {
+      setFeedbackError(error.message || 'Không thể kết nối tới server.');
+    } finally {
+      setIsFeedbackLoading(false);
+    }
+  };
+
+  const handleLogin = async (event) => {
+    event.preventDefault();
+    setIsSubmitting(true);
+    setStatus(null);
+
+    try {
+      const response = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Không thể đăng nhập admin.');
+
+      setToken(result.token);
+      setPassword('');
+      setStatus({ type: 'success', message: 'Đã đăng nhập. Phiên admin hết hạn sau 8 giờ.' });
+      await loadFeedback(result.token);
+    } catch (error) {
+      setStatus({ type: 'error', message: error.message || 'Không thể kết nối tới server.' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSendAnnouncement = async (event) => {
+    event.preventDefault();
+    const trimmedMessage = message.trim();
+    if (!trimmedMessage || !token) return;
+
+    setIsSubmitting(true);
+    setStatus(null);
+    try {
+      const response = await fetch('/api/admin/announcements', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ message: trimmedMessage })
+      });
+      const result = await response.json();
+      if (response.status === 401) setToken('');
+      if (!response.ok) throw new Error(result.error || 'Không thể gửi thông báo.');
+
+      setMessage('');
+      setStatus({
+        type: 'success',
+        message: `Đã gửi thông báo tới ${result.recipientCount} người đang online.`
+      });
+    } catch (error) {
+      setStatus({ type: 'error', message: error.message || 'Không thể kết nối tới server.' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    setIsSubmitting(true);
+    try {
+      const response = await fetch('/api/admin/session', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok && response.status !== 401) {
+        const result = await response.json();
+        throw new Error(result.error || 'Không thể thu hồi phiên admin.');
+      }
+      setToken('');
+      setStatus({ type: 'success', message: 'Đã đăng xuất admin.' });
+    } catch (error) {
+      setToken('');
+      setStatus({
+        type: 'error',
+        message: `Đã xóa phiên trên trình duyệt nhưng chưa xác nhận thu hồi trên server: ${error.message || 'Lỗi kết nối.'}`
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <main className="fixed inset-0 flex items-center justify-center overflow-y-auto bg-[#08090b] px-4 py-8 text-zinc-100">
+      <section className="w-full max-w-lg rounded-2xl border border-zinc-800 bg-[#111214] p-5 sm:p-7">
+        <a href="/" className="text-xs text-zinc-400 transition-colors hover:text-zinc-100">
+          ← Quay lại chat
+        </a>
+        <h1 className="mt-6 text-xl font-semibold">Admin console</h1>
+        <p className="mt-2 rounded-lg border border-amber-300/15 bg-amber-300/5 px-3 py-2.5 text-xs leading-relaxed text-amber-100/80">
+          Admin có thể gửi thông báo hệ thống và xem góp ý người dùng chủ động gửi. Admin không thể xem tin nhắn hay nội dung trò chuyện riêng tư.
+        </p>
+
+        {!token ? (
+          <form onSubmit={handleLogin} className="mt-6 space-y-3">
+            <label htmlFor="admin-password" className="block text-xs text-zinc-400">
+              Mật khẩu admin
+            </label>
+            <input
+              id="admin-password"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
+              required
+              disabled={isSubmitting}
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm outline-none focus:border-zinc-500 disabled:opacity-60"
+            />
+            <button
+              type="submit"
+              disabled={!password || isSubmitting}
+              className="w-full rounded-lg bg-zinc-100 px-4 py-2.5 text-sm font-medium text-zinc-900 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {isSubmitting ? 'Đang xác thực…' : 'Đăng nhập'}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleSendAnnouncement} className="mt-6 space-y-3">
+            <label htmlFor="admin-announcement" className="block text-xs text-zinc-400">
+              Thông báo hệ thống
+            </label>
+            <textarea
+              id="admin-announcement"
+              value={message}
+              onChange={(event) => setMessage(event.target.value.slice(0, 1000))}
+              maxLength={1000}
+              rows={5}
+              required
+              disabled={isSubmitting}
+              placeholder="Viết thông báo sẽ hiển thị cho mọi người đang online…"
+              className="w-full resize-y rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-zinc-500 disabled:opacity-60"
+            />
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[10px] text-zinc-500">{message.length}/1000 ký tự</p>
+              <button
+                type="submit"
+                disabled={!message.trim() || isSubmitting}
+                className="rounded-lg bg-zinc-100 px-4 py-2.5 text-sm font-medium text-zinc-900 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {isSubmitting ? 'Đang gửi…' : 'Gửi thông báo'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {token && (
+          <section className="mt-8 border-t border-zinc-800 pt-6" aria-labelledby="admin-feedback-title">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 id="admin-feedback-title" className="text-sm font-medium text-zinc-100">Góp ý người dùng</h2>
+                <p className="mt-1 text-[10px] text-zinc-500">Tối đa 100 góp ý gần nhất</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => loadFeedback(token)}
+                disabled={isFeedbackLoading}
+                className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition-colors hover:bg-zinc-800 disabled:opacity-50"
+              >
+                {isFeedbackLoading ? 'Đang tải…' : 'Làm mới'}
+              </button>
+            </div>
+            {feedbackError && (
+              <p className="mt-3 text-xs text-rose-300" role="alert">{feedbackError}</p>
+            )}
+            {!feedbackError && !isFeedbackLoading && feedbackEntries.length === 0 && (
+              <p className="mt-4 text-xs text-zinc-500">Chưa có góp ý nào.</p>
+            )}
+            {feedbackEntries.length > 0 && (
+              <ol className="mt-4 max-h-96 space-y-3 overflow-y-auto pr-1">
+                {feedbackEntries.map((entry, index) => (
+                  <li
+                    key={`${entry.timestamp}-${index}`}
+                    className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-medium text-zinc-200">
+                        {entry.username || 'Ẩn danh'}
+                      </p>
+                      <time className="text-[10px] text-zinc-500" dateTime={entry.timestamp}>
+                        {new Date(entry.timestamp).toLocaleString()}
+                      </time>
+                    </div>
+                    <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-relaxed text-zinc-400">
+                      {entry.feedback}
+                    </p>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+        )}
+
+        {status && (
+          <p
+            className={`mt-4 text-xs ${status.type === 'error' ? 'text-rose-300' : 'text-emerald-300'}`}
+            role={status.type === 'error' ? 'alert' : 'status'}
+          >
+            {status.message}
+          </p>
+        )}
+
+        {token && (
+          <button
+            type="button"
+            onClick={handleLogout}
+            disabled={isSubmitting}
+            className="mt-5 text-xs text-zinc-500 underline decoration-zinc-700 underline-offset-4 hover:text-zinc-300 disabled:opacity-50"
+          >
+            Đăng xuất admin
+          </button>
+        )}
+      </section>
+    </main>
+  );
+};
+
+const AnonyChat = () => (
+  window.location.pathname.replace(/\/+$/, '') === '/admin'
+    ? <AdminConsole />
+    : <ChatApp />
+);
 
 export default AnonyChat;
