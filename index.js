@@ -37,6 +37,7 @@ const PAIR_REMATCH_COOLDOWN_MS = pairRematchCooldownSeconds * 1000;
 const MESSAGE_LOGGING_ENABLED = messageLoggingSetting === 'true';
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_FEEDBACK_LENGTH = 2000;
+const MAX_FEEDBACK_USERNAME_LENGTH = 80;
 const FEEDBACK_COOLDOWN_MS = 60 * 1000;
 
 function decodeImageData(data) {
@@ -279,36 +280,47 @@ function enqueueSession(session, position = waiting.length) {
 }
 
 function endConversation(ws) {
-  const partner = ws.partner;
-  if (!partner || partner.readyState !== partner.OPEN) return;
-
   const session = ws.session;
-  const partnerSession = partner.session;
+  const partnerSession = session?.partnerId ? clients.get(session.partnerId) : null;
   if (!session || !partnerSession) return;
+
+  const partner = partnerSession.ws;
+  const partnerIsConnected = Boolean(partner && partner.readyState === partner.OPEN);
 
   blockPair(session.clientId, partnerSession.clientId);
   ws.partner = null;
-  partner.partner = null;
   session.partnerId = null;
-  partnerSession.partnerId = null;
+  if (partnerSession.partnerId === session.clientId) {
+    partnerSession.partnerId = null;
+  }
 
-  for (const currentSession of [session, partnerSession]) {
-    clearTimeout(currentSession.reconnectTimer);
-    currentSession.reconnectTimer = null;
-    currentSession.waiting = false;
-    currentSession.queuedPosition = null;
+  clearTimeout(session.reconnectTimer);
+  session.reconnectTimer = null;
+  session.waiting = false;
+  session.queuedPosition = null;
+
+  if (partnerIsConnected) {
+    partner.partner = null;
+    clearTimeout(partnerSession.reconnectTimer);
+    partnerSession.reconnectTimer = null;
+    partnerSession.waiting = false;
+    partnerSession.queuedPosition = null;
   }
 
   chatLogger.pairDisconnected(session.clientId, partnerSession.clientId, 'ended_by_user');
   safeSend(ws, { system: '[SYSTEM] Conversation ended. Finding a new stranger…' });
-  safeSend(partner, { system: '[SYSTEM] Conversation ended. Finding a new stranger…' });
+  if (partnerIsConnected) {
+    safeSend(partner, { system: '[SYSTEM] Conversation ended. Finding a new stranger…' });
+  }
 
   enqueueSession(session);
-  enqueueSession(partnerSession);
+  if (partnerIsConnected) enqueueSession(partnerSession);
   matchWaiting();
 
   if (session.waiting) safeSend(ws, { system: '[SYSTEM] Waiting for a stranger…' });
-  if (partnerSession.waiting) safeSend(partner, { system: '[SYSTEM] Waiting for a stranger…' });
+  if (partnerIsConnected && partnerSession.waiting) {
+    safeSend(partner, { system: '[SYSTEM] Waiting for a stranger…' });
+  }
   updateConnectionStats();
 }
 
@@ -360,6 +372,7 @@ wss.on('connection', (ws, request) => {
   ws.session = session;
   connections.add(ws);
   ws.isAlive = true;
+  ws.missedHeartbeats = 0;
 
   safeSend(ws, {
     type: 'config',
@@ -407,6 +420,7 @@ wss.on('connection', (ws, request) => {
 
   ws.on('message', async (data) => {
     ws.isAlive = true;
+    ws.missedHeartbeats = 0;
 
     let msg;
     try {
@@ -423,11 +437,24 @@ wss.on('connection', (ws, request) => {
 
     if (msg.type === 'feedback') {
       const feedback = typeof msg.data === 'string' ? msg.data.trim() : '';
+      const username = typeof msg.username === 'string' ? msg.username.trim() : '';
       if (!feedback || feedback.length > MAX_FEEDBACK_LENGTH) {
         safeSend(ws, {
           type: 'feedbackResult',
           ok: false,
           message: `Góp ý phải dài từ 1 đến ${MAX_FEEDBACK_LENGTH} ký tự.`
+        });
+        return;
+      }
+
+      if (
+        (msg.username !== undefined && typeof msg.username !== 'string')
+        || username.length > MAX_FEEDBACK_USERNAME_LENGTH
+      ) {
+        safeSend(ws, {
+          type: 'feedbackResult',
+          ok: false,
+          message: `Tên không được vượt quá ${MAX_FEEDBACK_USERNAME_LENGTH} ký tự.`
         });
         return;
       }
@@ -445,6 +472,7 @@ wss.on('connection', (ws, request) => {
       try {
         await appendFeedbackLog({
           timestamp: new Date().toISOString(),
+          ...(username ? { username } : {}),
           feedback
         });
         ws.session.lastFeedbackAt = Date.now();
@@ -566,6 +594,7 @@ wss.on('connection', (ws, request) => {
 
   ws.on('pong', () => {
     ws.isAlive = true;
+    ws.missedHeartbeats = 0;
   });
 
   ws.on('close', () => {
@@ -585,10 +614,15 @@ const heartbeat = setInterval(() => {
 
   connections.forEach((ws) => {
     if (ws.isAlive === false) {
-      deadCount++;
-      disconnect(ws);
-      ws.terminate();
-      return;
+      ws.missedHeartbeats = (ws.missedHeartbeats ?? 0) + 1;
+      if (ws.missedHeartbeats >= 3) {
+        deadCount++;
+        disconnect(ws);
+        ws.terminate();
+        return;
+      }
+    } else {
+      ws.missedHeartbeats = 0;
     }
 
     aliveCount++;

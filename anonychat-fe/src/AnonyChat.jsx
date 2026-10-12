@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import confetti from 'canvas-confetti';
 
 const REACTION_EMOJIS = ['❤️', '😂', '😮', '😢', '👍'];
@@ -60,6 +60,7 @@ const useAudio = () => {
 const useWebSocket = (playSound) => {
   const [ws, setWs] = useState(null);
   const [isUserConnected, setIsUserConnected] = useState(false);
+  const [hasActiveConversation, setHasActiveConversation] = useState(false);
   const [messages, setMessages] = useState([]);
   const [onlineCount, setOnlineCount] = useState(0);
   const [activityEventCount, setActivityEventCount] = useState(0);
@@ -168,6 +169,7 @@ const useWebSocket = (playSound) => {
 
         if (msg.system?.includes('Connected to a stranger')) {
           setIsUserConnected(true);
+          setHasActiveConversation(true);
           if (!isReconnecting) {
             setMessages([]);
             nextMessageIndexRef.current = 0;
@@ -181,11 +183,13 @@ const useWebSocket = (playSound) => {
 
         if (msg.system?.toLowerCase().includes('reconnected')) {
           setIsUserConnected(true);
+          setHasActiveConversation(true);
           isReconnecting = false;
         }
 
         if (msg.system?.includes('Waiting for a stranger') || msg.system?.includes('No partner available')) {
           setIsUserConnected(false);
+          setHasActiveConversation(false);
           if (msg.system.includes('Waiting for a stranger')) {
             isReconnecting = false;
           }
@@ -193,6 +197,7 @@ const useWebSocket = (playSound) => {
 
         if (msg.system?.toLowerCase().includes('conversation ended')) {
           setIsUserConnected(false);
+          setHasActiveConversation(false);
           isReconnecting = false;
         }
 
@@ -202,6 +207,7 @@ const useWebSocket = (playSound) => {
 
         if (msg.system?.includes('disconnected')) {
           setIsUserConnected(false);
+          setHasActiveConversation(false);
           playSound('disconnect');
         }
 
@@ -377,12 +383,12 @@ const useWebSocket = (playSound) => {
     return false;
   };
 
-  const sendFeedback = useCallback((data) => {
+  const sendFeedback = useCallback(({ feedback, username }) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       setFeedbackStatus({ type: 'error', message: 'Chưa kết nối được server. Bạn thử lại sau nhé.' });
       return false;
     }
-    ws.send(JSON.stringify({ type: 'feedback', data }));
+    ws.send(JSON.stringify({ type: 'feedback', data: feedback, username }));
     setFeedbackStatus({ type: 'pending', message: 'Đang gửi góp ý…' });
     return true;
   }, [ws]);
@@ -391,6 +397,7 @@ const useWebSocket = (playSound) => {
 
   return {
     isUserConnected,
+    hasActiveConversation,
     messages,
     sendMessage,
     sendReaction,
@@ -620,14 +627,11 @@ const OnlineCounter = ({ count }) => {
 const ChatLog = ({ messages, isUserConnected, onReact }) => {
   const logRef = useRef(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (logRef.current) {
-      logRef.current.scrollTo({
-        top: logRef.current.scrollHeight,
-        behavior: 'smooth'
-      });
+      logRef.current.scrollTop = logRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, isUserConnected]);
 
   return (
     <div
@@ -707,6 +711,12 @@ const MessageInput = ({ onSendMessage, onTyping, onOpenAdmin, isConnected }) => 
 
   const submitMessage = () => {
     if (!message.trim() || !isConnected) return;
+    if (message.trim().toLowerCase() === '/admin') {
+      setMessage('');
+      onOpenAdmin();
+      return;
+    }
+
     const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     onSendMessage({
       type: 'text',
@@ -806,19 +816,8 @@ const MessageInput = ({ onSendMessage, onTyping, onOpenAdmin, isConnected }) => 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (isConnected && message.trim().toLowerCase() === '/admin') {
-        setMessage('');
-        onOpenAdmin();
-        return;
-      }
       submitMessage();
     }
-  };
-
-  const handleFocus = () => {
-    requestAnimationFrame(() => {
-      inputRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    });
   };
 
   return (
@@ -843,7 +842,6 @@ const MessageInput = ({ onSendMessage, onTyping, onOpenAdmin, isConnected }) => 
           }}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          onFocus={handleFocus}
           className="max-h-[120px] min-h-[40px] flex-1 resize-none overflow-y-auto bg-transparent px-1.5 py-2 text-sm leading-6 text-zinc-50 placeholder:text-zinc-500 focus:outline-none disabled:cursor-not-allowed"
           placeholder={isConnected ? 'Nhập tin nhắn hoặc dán ảnh...' : 'Đang kết nối...'}
           autoComplete="off"
@@ -905,6 +903,7 @@ const MessageInput = ({ onSendMessage, onTyping, onOpenAdmin, isConnected }) => 
 
 const FeedbackModal = ({ status, onClose, onSubmit }) => {
   const [feedback, setFeedback] = useState('');
+  const [username, setUsername] = useState('');
   const textareaRef = useRef(null);
   const isPending = status?.type === 'pending';
   const isSent = status?.type === 'success';
@@ -921,7 +920,7 @@ const FeedbackModal = ({ status, onClose, onSubmit }) => {
   const submit = (event) => {
     event.preventDefault();
     if (!feedback.trim() || isPending || isSent) return;
-    onSubmit(feedback.trim());
+    onSubmit({ feedback: feedback.trim(), username: username.trim() });
   };
 
   return (
@@ -962,6 +961,16 @@ const FeedbackModal = ({ status, onClose, onSubmit }) => {
           disabled={isPending || isSent}
           placeholder="Bạn muốn góp ý điều gì?"
           className="w-full resize-y rounded-xl border border-zinc-700/80 bg-zinc-950/70 p-3 text-sm leading-relaxed text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none disabled:opacity-60"
+        />
+        <input
+          type="text"
+          value={username}
+          onChange={(event) => setUsername(event.target.value.slice(0, 80))}
+          maxLength={80}
+          disabled={isPending || isSent}
+          placeholder="Tên của bạn (không bắt buộc)"
+          aria-label="Tên của bạn (không bắt buộc)"
+          className="mt-3 w-full rounded-xl border border-zinc-700/80 bg-zinc-950/70 p-3 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none disabled:opacity-60"
         />
         <div className="mt-2 flex items-center justify-between gap-3">
           <p
@@ -1058,7 +1067,7 @@ const DonationModal = ({ onClose }) => {
   );
 };
 
-const ChatHeader = ({ onlineCount, isUserConnected, onEndConversation, onOpenDonation }) => (
+const ChatHeader = ({ onlineCount, hasActiveConversation, isUserConnected, onEndConversation, onOpenDonation }) => (
   <div className="flex shrink-0 items-center justify-between gap-1.5 rounded-[1.05rem] border border-zinc-800/80 bg-[#111214]/80 px-2.5 py-2.5 sm:gap-2 md:px-4 md:py-3">
     <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
       <span
@@ -1081,7 +1090,7 @@ const ChatHeader = ({ onlineCount, isUserConnected, onEndConversation, onOpenDon
     </div>
     <div className="flex min-w-0 items-center justify-end gap-1 sm:gap-2">
       <OnlineCounter count={onlineCount} />
-      {isUserConnected && (
+      {hasActiveConversation && (
         <button
           type="button"
           onClick={onEndConversation}
@@ -1104,6 +1113,7 @@ const AnonyChat = () => {
   const { playSound } = useAudio();
   const {
     isUserConnected,
+    hasActiveConversation,
     messages,
     sendMessage,
     sendReaction,
@@ -1339,7 +1349,7 @@ const AnonyChat = () => {
 
   return (
     <div
-      className="relative flex h-[100dvh] items-center justify-center overflow-hidden bg-[#08090b] px-1 py-3 text-zinc-100 md:px-2 md:py-8 xl:px-8"
+      className="fixed inset-x-0 top-0 flex items-center justify-center overflow-hidden bg-[#08090b] px-1 py-3 text-zinc-100 md:px-2 md:py-8 xl:px-8"
       style={{
         fontFamily: 'Maple Mono, monospace',
         height: `${viewportHeight}px`,
@@ -1366,6 +1376,7 @@ const AnonyChat = () => {
       <ChatContainer>
         <ChatHeader
           onlineCount={onlineCount}
+          hasActiveConversation={hasActiveConversation}
           isUserConnected={isUserConnected}
           onEndConversation={handleEndConversation}
           onOpenDonation={() => setIsDonationOpen(true)}
