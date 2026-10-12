@@ -1129,6 +1129,39 @@ const AnonyChat = () => {
     feedbackStatus,
     clearFeedbackStatus
   } = useWebSocket(playSound);
+
+  useEffect(() => {
+    const pageTitle = 'AnonyChat | Anonymous Chat with Strangers Online';
+    const pageDescription = 'AnonyChat is a free anonymous chat app for one-on-one stranger conversations and instant online messaging. Trò chuyện ẩn danh miễn phí với người lạ trực tuyến và gửi tin nhắn riêng tư ngay tức thì.';
+    const pageKeywords = 'anonymous chat, random chat, stranger chat, online chat, private chat, trò chuyện ẩn danh, chat với người lạ, chat trực tuyến, tin nhắn ẩn danh';
+
+    document.title = pageTitle;
+
+    const setMeta = (selector, content) => {
+      let element = document.head.querySelector(selector);
+      if (!element) {
+        element = document.createElement('meta');
+        if (selector.startsWith('meta[name=')) {
+          const attributeName = selector.match(/meta\[name="([^"]+)"\]/)?.[1];
+          if (attributeName) {
+            element.setAttribute('name', attributeName);
+          }
+        } else if (selector.startsWith('meta[property=')) {
+          const attributeName = selector.match(/meta\[property="([^"]+)"\]/)?.[1];
+          if (attributeName) {
+            element.setAttribute('property', attributeName);
+          }
+        }
+        document.head.appendChild(element);
+      }
+      element.setAttribute('content', content);
+    };
+
+    setMeta('meta[name="description"]', pageDescription);
+    setMeta('meta[name="keywords"]', pageKeywords);
+    setMeta('meta[property="og:title"]', pageTitle);
+    setMeta('meta[property="og:description"]', pageDescription);
+  }, []);
   const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
@@ -1338,6 +1371,12 @@ const AnonyChat = () => {
           celebration={activeCelebration}
         />
       )}
+
+      <div className="sr-only" aria-live="polite">
+        <h1>AnonyChat</h1>
+        <p>Anonymous chat with strangers online, private one-to-one conversations, real-time messaging, and instant matching.</p>
+        <p>Trò chuyện ẩn danh với người lạ trực tuyến, cuộc trò chuyện riêng tư theo cặp, nhắn tin thời gian thực và ghép cặp tức thì.</p>
+      </div>
 
       <ChatContainer>
         <ChatHeader
