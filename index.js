@@ -434,6 +434,22 @@ wss.on('connection', (ws, request) => {
       return;
     }
 
+    if (msg.type === 'reaction') {
+      if (
+        Number.isSafeInteger(msg.messageIndex)
+        && (msg.author === 'self' || msg.author === 'peer')
+        && (msg.emoji === null || typeof msg.emoji === 'string')
+      ) {
+        safeSend(ws.partner, {
+          type: 'reaction',
+          messageIndex: msg.messageIndex,
+          author: msg.author,
+          emoji: msg.emoji
+        });
+      }
+      return;
+    }
+
     const isTextMessage = msg.type === 'text' && typeof msg.data === 'string' && msg.data.trim().length > 0;
     const imageBytes = msg.type === 'image' && typeof msg.data === 'string'
       ? decodeImageData(msg.data)
@@ -478,14 +494,16 @@ wss.on('connection', (ws, request) => {
         type: isTextMessage ? 'text' : 'image',
         data: msg.data,
         from: 'self',
-        id: messageId
+        id: messageId,
+        messageIndex: Number.isSafeInteger(msg.messageIndex) ? msg.messageIndex : undefined
       });
 
       safeSend(recipient, {
         type: isTextMessage ? 'text' : 'image',
         data: msg.data,
         from: 'stranger',
-        id: messageId
+        id: messageId,
+        messageIndex: Number.isSafeInteger(msg.messageIndex) ? msg.messageIndex : undefined
       });
     }
 

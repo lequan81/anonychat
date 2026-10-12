@@ -19,7 +19,7 @@ The project has two main parts:
 2. Every client connection gets a UUID and is added to a global `connections` set.
 3. New clients are placed into a `waiting` queue until another user is available.
 4. The server matches waiting users while skipping UUID pairs temporarily blocked by an end-conversation cooldown.
-5. Once paired, the server forwards validated text or JPEG image messages, delivery receipts, and typing notifications between the two sockets.
+5. Once paired, the server forwards validated text or JPEG image messages, delivery receipts, typing notifications, and allowlisted emoji reactions between the two sockets.
 6. A heartbeat system sends ping/pong checks to detect dead or stale connections. On an unexpected disconnect, the partner session can be resumed within the configured reconnect grace period.
 7. Application/metrics logs are written through `logger.js`; message content is written separately through `messageLog.js` to dated, size-rotated JSONL files when message logging is enabled.
 
@@ -58,6 +58,8 @@ The client listens for messages such as:
 The client can reconnect to the same chat session after a transient network interruption, with an exponential retry delay and a server-configured grace period (`RECONNECT_GRACE_SECONDS`, default 30). The client keeps the conversation history during reconnect. A second active connection using the same client UUID is rejected with close code 4001; the client does not retry that duplicate-tab rejection.
 
 Text and JPEG image messages are echoed to the sender and forwarded to the partner. Images are limited to 5 MiB by the server and are resized on the client before sending. The “Thoát” action ends the conversation for both participants and places them back in matching.
+
+Each text or image message gets a monotonically increasing index local to each client. Messages also carry the sender's local index so reactions can target the same message even if the two clients have different local ordering. Each participant can set one reaction per message from ❤️, 😂, 😮, 😢, and 👍, or use the remove button to clear it. From the local user's point of view, their reaction is shown as a count-free icon attached to the bottom-right corner, while the other participant's reaction is attached to the top-left corner. A reaction event springs its icon from small through an overshoot to its final size; reduced-motion preferences disable the animation. On desktop, the picker appears when a message is hovered or focused; on touch layouts, tap the message itself to open it. The server only validates the reaction packet shape and forwards it; clients maintain reaction state.
 
 ### 3. Typing and delivery signals
 

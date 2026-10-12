@@ -7,6 +7,7 @@ A simple anonymous chat that connects you with a random stranger. Nothing fancy.
 * Random 1-on-1 pairing
 * Typing indicator
 * Send images by selecting a file or pasting one from the clipboard in the message field
+* React to text and image messages with one of five shared emoji reactions
 * Automatically reconnects to the same chat partner after a network interruption, preserving the chat history; defaults to a 30-second reconnect window with a timeline countdown
 * The “Thoát” button ends the current conversation for both participants and returns them to matching; that UUID pair cannot be matched again during the 15-second cooldown by default
 * Shows a color-only connection indicator before the app name and the first four characters of the other participant's UUID in the header; the full UUID remains between the client and server for reconnect

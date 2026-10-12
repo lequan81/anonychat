@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
+const REACTION_EMOJIS = ['❤️', '😂', '😮', '😢', '👍'];
+
 const useAudio = () => {
   const audioRefs = useRef({
     connect: new Audio('/sounds/activity.mp3'),
@@ -31,6 +33,7 @@ const useWebSocket = (playSound) => {
   const [onlineCount, setOnlineCount] = useState(0);
   const typingTimeoutRef = useRef(null);
   const reconnectGraceRef = useRef(30);
+  const nextMessageIndexRef = useRef(0);
 
   useEffect(() => {
     const storageKey = 'anonychat-client-id';
@@ -90,10 +93,35 @@ const useWebSocket = (playSound) => {
           return;
         }
 
+        if (msg.type === 'reaction') {
+          if (
+            !Number.isSafeInteger(msg.messageIndex)
+            || (msg.author !== 'self' && msg.author !== 'peer')
+            || (msg.emoji !== null && !REACTION_EMOJIS.includes(msg.emoji))
+          ) {
+            return;
+          }
+          const targetAuthor = msg.author === 'self' ? 'peer' : 'self';
+          setMessages((prev) => prev.map((message) => (
+            message.originIndex === msg.messageIndex && message.author === targetAuthor
+              ? {
+                ...message,
+                reactions: { ...message.reactions, peer: msg.emoji },
+                reactionAnimation: {
+                  emoji: msg.emoji ?? message.reactions.peer,
+                  revision: (message.reactionAnimation?.revision ?? 0) + 1
+                }
+              }
+              : message
+          )));
+          return;
+        }
+
         if (msg.system?.includes('Connected to a stranger')) {
           setIsUserConnected(true);
           if (!isReconnecting) {
             setMessages([]);
+            nextMessageIndexRef.current = 0;
           }
           isReconnecting = false;
           playSound('connect');
@@ -134,11 +162,17 @@ const useWebSocket = (playSound) => {
 
           const incomingMessage = {
             id: msg.id,
+            index: msg.from === 'self' && Number.isSafeInteger(msg.messageIndex)
+              ? msg.messageIndex
+              : nextMessageIndexRef.current++,
+            originIndex: Number.isSafeInteger(msg.messageIndex) ? msg.messageIndex : null,
+            author: msg.from === 'self' ? 'self' : 'peer',
             type: msg.type,
             data: msg.data,
             from: msg.from,
             isMine: msg.from === 'self',
             delivered: msg.from === 'self' ? false : true,
+            reactions: { self: null, peer: null },
             timestamp: Date.now()
           };
 
@@ -257,33 +291,152 @@ const useWebSocket = (playSound) => {
 
   const sendMessage = (data) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(data));
+      if (data.type === 'text' || data.type === 'image') {
+        const messageIndex = nextMessageIndexRef.current++;
+        ws.send(JSON.stringify({ ...data, messageIndex }));
+      } else {
+        ws.send(JSON.stringify(data));
+      }
     }
   };
 
-  return { isUserConnected, peerIdPrefix, messages, sendMessage, onlineCount };
+  const sendReaction = (targetMessage, emoji) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'reaction',
+        messageIndex: targetMessage.originIndex,
+        author: targetMessage.author,
+        emoji
+      }));
+      setMessages((prev) => prev.map((message) => (
+        message.index === targetMessage.index
+          ? {
+            ...message,
+            reactions: { ...message.reactions, self: emoji },
+            reactionAnimation: {
+              emoji: emoji ?? message.reactions.self,
+              revision: (message.reactionAnimation?.revision ?? 0) + 1
+            }
+          }
+          : message
+      )));
+      return true;
+    }
+    return false;
+  };
+
+  return { isUserConnected, peerIdPrefix, messages, sendMessage, sendReaction, onlineCount };
 };
 
-const ChatBubble = ({ message, image, isMine, delivered }) => (
-  <div
-    className={`max-w-[82%] w-fit break-words rounded-[1.35rem] border px-3 py-2.5 text-sm leading-relaxed transition-colors duration-200 ${isMine
-      ? delivered
-        ? 'ml-auto border-emerald-500/20 bg-emerald-500/[0.035] text-zinc-100 text-right'
-        : 'ml-auto border-amber-500/25 bg-amber-500/[0.06] text-zinc-100 text-right'
-      : 'mr-auto border-zinc-800 bg-zinc-900/50 text-zinc-100 text-left'
-      }`}
-  >
-    {image ? (
-      <img
-        src={image}
-        alt="Ảnh được gửi trong cuộc trò chuyện"
-        className="max-h-80 max-w-full rounded-lg object-contain"
-      />
-    ) : (
-      <span className="block">{message}</span>
-    )}
-  </div>
-);
+const ChatMessage = ({
+  message,
+  image,
+  isMine,
+  delivered,
+  reactions,
+  reactionAnimation,
+  index,
+  originIndex,
+  author,
+  onReact
+}) => {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const selectedReaction = reactions?.self ?? null;
+  const ownReaction = reactions?.self ?? null;
+  const peerReaction = reactions?.peer ?? null;
+
+  const handleReaction = (emoji) => {
+    const sent = onReact({ index, originIndex, author }, emoji);
+    if (sent) setPickerOpen(false);
+  };
+
+  return (
+    <div className={`flex w-full items-start ${isMine ? 'justify-end' : 'justify-start'}`}>
+      <div className={`group relative w-fit max-w-[82%] ${(ownReaction || peerReaction) ? 'pb-5' : ''} ${isMine ? 'text-right' : 'text-left'}`}>
+        <div
+          className={`absolute -top-10 z-10 flex items-center gap-1 rounded-full border border-zinc-700/80 bg-zinc-950 p-1 shadow-[0_4px_16px_rgba(0,0,0,0.35)] opacity-0 pointer-events-none transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 ${isMine ? 'right-0' : 'left-0'} ${pickerOpen ? 'pointer-events-auto opacity-100' : ''}`}
+          role="group"
+          aria-label="Chọn cảm xúc"
+        >
+          {REACTION_EMOJIS.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              aria-label={`Phản ứng ${emoji}`}
+              aria-pressed={selectedReaction === emoji}
+              onClick={() => handleReaction(emoji)}
+              className={`flex h-8 w-8 items-center justify-center rounded-full text-base transition-colors hover:bg-zinc-800 ${selectedReaction === emoji ? 'bg-zinc-800' : ''}`}
+            >
+              {emoji}
+            </button>
+          ))}
+          {selectedReaction && (
+            <button
+              type="button"
+              aria-label="Bỏ reaction"
+              onClick={() => handleReaction(null)}
+              className="flex h-8 w-8 items-center justify-center rounded-full text-lg text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+            >
+              ×
+            </button>
+          )}
+        </div>
+        <button
+          type="button"
+          aria-label="Chạm hoặc nhấn Enter để chọn cảm xúc"
+          onClick={() => setPickerOpen(true)}
+          className={`w-fit max-w-full break-words rounded-[1.35rem] border px-3 py-2.5 text-sm leading-relaxed transition-colors duration-200 ${isMine
+            ? delivered
+              ? 'ml-auto border-emerald-500/20 bg-emerald-500/[0.035] text-zinc-100'
+              : 'ml-auto border-amber-500/25 bg-amber-500/[0.06] text-zinc-100'
+            : 'mr-auto border-zinc-800 bg-zinc-900/50 text-zinc-100'
+            }`}
+        >
+          {image ? (
+            <img
+              src={image}
+              alt="Ảnh được gửi trong cuộc trò chuyện"
+              className="max-h-80 max-w-full rounded-lg object-contain"
+            />
+          ) : (
+            <span className="block whitespace-pre-wrap text-left">{message}</span>
+          )}
+        </button>
+        {peerReaction && (
+          <div className={`absolute ${isMine ? '-left-3' : '-right-3'} -top-3 z-10 flex h-9 w-9 items-center justify-center text-2xl`} aria-label="Reaction của người chat cùng">
+            <span className="rotate-12">
+              <span
+                key={`peer-${reactionAnimation?.emoji === peerReaction ? reactionAnimation.revision : 0}`}
+                className={reactionAnimation?.emoji === peerReaction ? 'animate-reaction-spring inline-block' : 'inline-block'}
+              >
+                {peerReaction}
+              </span>
+            </span>
+          </div>
+        )}
+        {ownReaction && (
+          <button
+            type="button"
+            aria-label={`${ownReaction} reaction của bạn, bỏ reaction`}
+            aria-pressed="true"
+            onClick={() => onReact({ index, originIndex, author }, null)}
+            className={`absolute -bottom-1 ${isMine ? '-right-2' : '-left-2'} z-10 inline-flex h-9 w-9 items-center justify-center border-0 bg-transparent p-0 text-2xl`}
+            title="Bỏ reaction của bạn"
+          >
+            <span className="-rotate-12">
+              <span
+                key={`self-${reactionAnimation?.emoji === ownReaction ? reactionAnimation.revision : 0}`}
+                className={reactionAnimation?.emoji === ownReaction ? 'animate-reaction-spring inline-block' : 'inline-block'}
+              >
+                {ownReaction}
+              </span>
+            </span>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const SystemMessage = ({ message }) => {
   const normalizedMessage = message.system.toLowerCase();
@@ -389,7 +542,7 @@ const OnlineCounter = ({ count }) => {
   );
 };
 
-const ChatLog = ({ messages, isUserConnected }) => {
+const ChatLog = ({ messages, isUserConnected, onReact }) => {
   const logRef = useRef(null);
 
   useEffect(() => {
@@ -426,17 +579,23 @@ const ChatLog = ({ messages, isUserConnected }) => {
       ) : (
         <div className="space-y-2">
           {messages.map((msg, idx) => (
-            <div key={msg.id || `${msg.timestamp}-${idx}`}>
+            <div key={msg.index ?? msg.id ?? `${msg.timestamp}-${idx}`}>
               {msg.system ? (
                 <SystemMessage message={msg} />
               ) : msg.type === 'typing' ? (
                 <TypingBubble />
               ) : (
-                <ChatBubble
+                <ChatMessage
                   message={msg.data}
                   image={msg.type === 'image' ? msg.data : null}
                   isMine={msg.isMine}
                   delivered={msg.delivered}
+                  reactions={msg.reactions}
+                  reactionAnimation={msg.reactionAnimation}
+                  index={msg.index}
+                  originIndex={msg.originIndex}
+                  author={msg.author}
+                  onReact={onReact}
                 />
               )}
             </div>
@@ -692,7 +851,7 @@ const ChatContainer = ({ children }) => (
 
 const AnonyChat = () => {
   const { playSound } = useAudio();
-  const { isUserConnected, peerIdPrefix, messages, sendMessage, onlineCount } = useWebSocket(playSound);
+  const { isUserConnected, peerIdPrefix, messages, sendMessage, sendReaction, onlineCount } = useWebSocket(playSound);
   const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
 
@@ -763,7 +922,7 @@ const AnonyChat = () => {
           peerIdPrefix={peerIdPrefix}
           onEndConversation={handleEndConversation}
         />
-        <ChatLog messages={messages} isUserConnected={isUserConnected} />
+        <ChatLog messages={messages} isUserConnected={isUserConnected} onReact={sendReaction} />
         <MessageInput onSendMessage={handleSendMessage} onTyping={handleTyping} isConnected={isUserConnected} />
       </ChatContainer>
     </div>
