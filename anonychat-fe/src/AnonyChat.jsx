@@ -199,11 +199,11 @@ const OnlineCounter = ({ count }) => {
 
   return (
     <div
-      className={`inline-flex items-center gap-2 rounded-full border border-zinc-700 bg-zinc-900/80 px-2.5 py-1 text-[9px] font-medium uppercase tracking-[0.18em] text-zinc-300 transition-all duration-300 ${
-        isAnimating ? 'scale-[1.03]' : 'scale-100'
+      className={`inline-flex items-center gap-2 text-[9px] font-medium uppercase tracking-[0.18em] text-zinc-300 transition-all duration-300 ${
+        isAnimating ? 'scale-[1.02]' : 'scale-100'
       }`}
     >
-      <span className="h-2 w-2 rounded-full bg-emerald-400" />
+      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
       {count ?? 0} trực tuyến
     </div>
   );
@@ -265,6 +265,7 @@ const MessageInput = ({ onSendMessage, onTyping, isConnected }) => {
   const [message, setMessage] = useState('');
   const [isFocused, setIsFocused] = useState(false);
   const typingTimeoutRef = useRef(null);
+  const inputRef = useRef(null);
 
   const handleTyping = () => {
     if (!isConnected) return;
@@ -302,17 +303,25 @@ const MessageInput = ({ onSendMessage, onTyping, isConnected }) => {
     setMessage('');
   };
 
+  const handleFocus = () => {
+    setIsFocused(true);
+    requestAnimationFrame(() => {
+      inputRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+  };
+
   return (
-    <div className="rounded-[1.5rem] border border-zinc-800/80 bg-zinc-950/70 px-2 py-2">
-      <div className="flex items-center gap-2 rounded-[1.2rem] bg-zinc-950/80 px-2 py-2 transition-all duration-200 focus-within:border focus-within:border-zinc-700">
+    <div className="rounded-[1rem] bg-zinc-950/70 px-1.5 py-1.5 md:px-2 md:py-2">
+    <div className="flex items-center gap-2 rounded-[0.85rem] bg-zinc-950/80 px-2 py-2 transition-all duration-200 focus-within:ring-1 focus-within:ring-zinc-700/80">
         <input
+          ref={inputRef}
           type="text"
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={handleKeyDown}
-          onFocus={() => setIsFocused(true)}
+          onFocus={handleFocus}
           onBlur={() => setIsFocused(false)}
-          className="flex-1 bg-transparent px-2 py-2 text-sm text-zinc-50 placeholder:text-zinc-500 focus:outline-none disabled:cursor-not-allowed"
+        className="flex-1 bg-transparent px-1.5 py-2 text-sm text-zinc-50 placeholder:text-zinc-500 focus:outline-none disabled:cursor-not-allowed"
           placeholder={isConnected ? 'Nhập tin nhắn...' : 'Đang kết nối...'}
           autoComplete="off"
           autoFocus
@@ -340,48 +349,51 @@ const MessageInput = ({ onSendMessage, onTyping, isConnected }) => {
           </svg>
         </button>
       </div>
-      {isFocused && <div className="mt-2 text-[9px] uppercase tracking-[0.2em] text-zinc-500">truyền ẩn danh</div>}
+    {isFocused && <div className="mt-2 text-[8px] uppercase tracking-[0.2em] text-zinc-500 md:text-[9px]">truyền ẩn danh</div>}
     </div>
   );
 };
 
 const ChatHeader = ({ onlineCount, isUserConnected }) => (
-  <div className="flex items-center justify-between gap-4 rounded-[1.5rem] border border-zinc-800/80 bg-zinc-900/80 px-4 py-3 md:px-5">
-    <div>
-      <p className="text-[9px] font-medium uppercase tracking-[0.24em] text-zinc-500">anonychat</p>
-      <h1 className="mt-1 text-xl font-medium tracking-[-0.06em] text-zinc-100 md:text-2xl">Phòng người lạ</h1>
+  <div className="flex items-center justify-between gap-2 rounded-[1.05rem] bg-[#111214]/80 px-3 py-2.5 md:px-4 md:py-3">
+    <div className="min-w-0">
+      <p className="text-[8px] font-medium uppercase tracking-[0.2em] text-zinc-500 md:text-[9px]">anonychat</p>
+      <h1 className="mt-0.5 text-base font-medium tracking-[-0.05em] text-zinc-100 md:text-xl">Phòng người lạ</h1>
     </div>
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 text-right">
       <OnlineCounter count={onlineCount} />
       <div
-        className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[9px] font-medium uppercase tracking-[0.18em] ${
-          isUserConnected
-            ? 'border-zinc-700 bg-zinc-800 text-zinc-200'
-            : 'border-zinc-700 bg-zinc-900 text-zinc-400'
+        className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[8px] font-medium uppercase tracking-[0.12em] md:text-[9px] ${
+          isUserConnected ? 'bg-zinc-800 text-zinc-200' : 'bg-zinc-900 text-zinc-400'
         }`}
       >
-        <span className={`h-2 w-2 rounded-full ${isUserConnected ? 'bg-emerald-400' : 'bg-zinc-400'}`} />
-        {isUserConnected ? 'Đã kết nối' : 'Đang tìm'}
+        <span className={`h-1.5 w-1.5 rounded-full ${isUserConnected ? 'bg-emerald-400' : 'bg-zinc-400'}`} />
+        {isUserConnected ? 'Kết nối' : 'Đang tìm'}
       </div>
     </div>
   </div>
 );
 
 const ChatContainer = ({ children }) => (
-  <div className="relative w-full max-w-xl rounded-[1.8rem] border border-zinc-800/80 bg-[#0d0d0f] p-3 shadow-[0_20px_50px_rgba(0,0,0,0.18)] md:p-4">
-    <div className="relative flex h-full min-h-[520px] flex-col gap-3 md:gap-4">{children}</div>
+  <div className="relative w-full max-w-[28rem] rounded-[1.3rem] bg-[#0b0b0d] p-1.5 md:max-w-xl md:rounded-[1.6rem] md:p-2">
+    <div className="relative flex h-full min-h-[420px] flex-col gap-2 md:min-h-[520px] md:gap-3">{children}</div>
   </div>
 );
 
 const AnonyChat = () => {
   const { playSound } = useAudio();
   const { isUserConnected, messages, typingStatus, sendMessage, onlineCount } = useWebSocket(playSound);
-  const [viewportHeight, setViewportHeight] = useState(window.innerHeight);
+  const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
+  const [keyboardOffset, setKeyboardOffset] = useState(0);
 
   useEffect(() => {
     const updateHeight = () => {
-      const height = window.visualViewport?.height || window.innerHeight;
+      const visualViewport = window.visualViewport;
+      const height = visualViewport?.height || window.innerHeight;
+      const offset = visualViewport ? Math.max(0, window.innerHeight - height) : 0;
+
       setViewportHeight(height);
+      setKeyboardOffset(offset);
     };
 
     const resizeHandler = () => {
@@ -390,6 +402,7 @@ const AnonyChat = () => {
 
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', resizeHandler);
+      window.visualViewport.addEventListener('scroll', resizeHandler);
     } else {
       window.addEventListener('resize', resizeHandler);
     }
@@ -399,6 +412,7 @@ const AnonyChat = () => {
     return () => {
       if (window.visualViewport) {
         window.visualViewport.removeEventListener('resize', resizeHandler);
+        window.visualViewport.removeEventListener('scroll', resizeHandler);
       } else {
         window.removeEventListener('resize', resizeHandler);
       }
@@ -417,13 +431,16 @@ const AnonyChat = () => {
 
   return (
     <div
-      className="relative flex min-h-[100dvh] items-center justify-center overflow-hidden bg-[#08090b] px-4 py-8 text-zinc-100 md:px-8"
+      className="relative flex min-h-[100dvh] items-center justify-center overflow-hidden bg-[#08090b] px-3 py-3 text-zinc-100 md:px-8 md:py-8"
       style={{
         fontFamily: 'Maple Mono, monospace',
-        minHeight: `${viewportHeight}px`
+        minHeight: `${viewportHeight}px`,
+        paddingBottom: keyboardOffset > 0 ? 'max(0.75rem, env(safe-area-inset-bottom))' : undefined,
+        paddingTop: keyboardOffset > 0 ? 'max(0.75rem, env(safe-area-inset-top))' : undefined,
+        justifyContent: keyboardOffset > 0 ? 'flex-start' : 'center'
       }}
     >
-      <div className="pointer-events-none absolute inset-0 opacity-[0.08] [background-image:linear-gradient(rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px)] [background-size:18px_18px]" />
+      <div className="pointer-events-none absolute inset-0 opacity-[0.06] [background-image:linear-gradient(rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px)] [background-size:18px_18px]" />
 
       <ChatContainer>
         <ChatHeader onlineCount={onlineCount} isUserConnected={isUserConnected} />
