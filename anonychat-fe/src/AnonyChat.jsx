@@ -64,6 +64,7 @@ const useWebSocket = (playSound) => {
   const [messages, setMessages] = useState([]);
   const [onlineCount, setOnlineCount] = useState(0);
   const [activityEventCount, setActivityEventCount] = useState(0);
+  const [feedbackStatus, setFeedbackStatus] = useState(null);
   const activityEventCountRef = useRef(0);
   const eventMilestoneTypesRef = useRef(new Map());
   const typingTimeoutRef = useRef(null);
@@ -129,6 +130,14 @@ const useWebSocket = (playSound) => {
 
         if (msg.type === 'stats' && msg.onlineCount !== undefined) {
           setOnlineCount(msg.onlineCount);
+        }
+
+        if (msg.type === 'feedbackResult') {
+          setFeedbackStatus({
+            type: msg.ok === true ? 'success' : 'error',
+            message: typeof msg.message === 'string' ? msg.message : 'Không nhận được phản hồi từ server.'
+          });
+          return;
         }
 
         if (msg.type === 'receipt') {
@@ -376,12 +385,27 @@ const useWebSocket = (playSound) => {
     return false;
   };
 
+  const sendFeedback = useCallback((data) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setFeedbackStatus({ type: 'error', message: 'Chưa kết nối được server. Bạn thử lại sau nhé.' });
+      return false;
+    }
+    ws.send(JSON.stringify({ type: 'feedback', data }));
+    setFeedbackStatus({ type: 'pending', message: 'Đang gửi góp ý…' });
+    return true;
+  }, [ws]);
+
+  const clearFeedbackStatus = useCallback(() => setFeedbackStatus(null), []);
+
   return {
     isUserConnected,
     peerIdPrefix,
     messages,
     sendMessage,
     sendReaction,
+    sendFeedback,
+    feedbackStatus,
+    clearFeedbackStatus,
     onlineCount,
     activityEventCount,
     eventMilestoneTypesRef
@@ -666,7 +690,7 @@ const ChatLog = ({ messages, isUserConnected, onReact }) => {
   );
 };
 
-const MessageInput = ({ onSendMessage, onTyping, isConnected }) => {
+const MessageInput = ({ onSendMessage, onTyping, onOpenAdmin, isConnected }) => {
   const [message, setMessage] = useState('');
   const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [attachmentError, setAttachmentError] = useState('');
@@ -791,6 +815,11 @@ const MessageInput = ({ onSendMessage, onTyping, isConnected }) => {
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      if (isConnected && message.trim().toLowerCase() === '/admin') {
+        setMessage('');
+        onOpenAdmin();
+        return;
+      }
       submitMessage();
     }
   };
@@ -830,18 +859,28 @@ const MessageInput = ({ onSendMessage, onTyping, isConnected }) => {
           autoFocus
           disabled={!isConnected}
         />
-        <button
-          type="button"
-          onClick={() => imageInputRef.current?.click()}
-          disabled={!isConnected || isProcessingImage}
-          className="inline-flex items-center justify-center rounded-full p-2.5 text-zinc-400 transition-all duration-200 hover:bg-zinc-800 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 active:scale-[0.98]"
-          aria-label="Gửi hình ảnh"
-          title="Chọn ảnh hoặc dán ảnh bằng Ctrl+V"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
-            <path d="M21 11.5 12.5 20a5 5 0 0 1-7.1-7.1l9.2-9.2a3.3 3.3 0 0 1 4.7 4.7l-9.2 9.2a1.7 1.7 0 0 1-2.4-2.4l8.5-8.5" />
-          </svg>
-        </button>
+        {isConnected ? (
+          <button
+            type="button"
+            onClick={() => imageInputRef.current?.click()}
+            disabled={isProcessingImage}
+            className="inline-flex items-center justify-center rounded-full p-2.5 text-zinc-400 transition-all duration-200 hover:bg-zinc-800 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 active:scale-[0.98]"
+            aria-label="Gửi hình ảnh"
+            title="Chọn ảnh hoặc dán ảnh bằng Ctrl+V"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden="true">
+              <path d="M21 11.5 12.5 20a5 5 0 0 1-7.1-7.1l9.2-9.2a3.3 3.3 0 0 1 4.7 4.7l-9.2 9.2a1.7 1.7 0 0 1-2.4-2.4l8.5-8.5" />
+            </svg>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onOpenAdmin}
+            className="shrink-0 rounded-lg px-2 py-2 text-[10px] text-zinc-400/70 transition-colors hover:bg-zinc-800/70 hover:text-zinc-200 active:scale-[0.98]"
+          >
+            chửi admin
+          </button>
+        )}
         <button
           type="button"
           onClick={submitMessage}
@@ -869,6 +908,86 @@ const MessageInput = ({ onSendMessage, onTyping, isConnected }) => {
           {attachmentError || 'Đang chuẩn bị hình ảnh…'}
         </p>
       )}
+    </div>
+  );
+};
+
+const FeedbackModal = ({ status, onClose, onSubmit }) => {
+  const [feedback, setFeedback] = useState('');
+  const textareaRef = useRef(null);
+  const isPending = status?.type === 'pending';
+  const isSent = status?.type === 'success';
+
+  useEffect(() => {
+    textareaRef.current?.focus();
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && !isPending) onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isPending, onClose]);
+
+  const submit = (event) => {
+    event.preventDefault();
+    if (!feedback.trim() || isPending || isSent) return;
+    onSubmit(feedback.trim());
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !isPending) onClose();
+      }}
+    >
+      <form
+        onSubmit={submit}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="feedback-title"
+        className="w-full max-w-md rounded-2xl border border-zinc-700/80 bg-[#111214] p-5 shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
+      >
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <h2 id="feedback-title" className="text-sm font-semibold text-zinc-100">Góp ý với admin</h2>
+            <p className="mt-1 text-xs text-zinc-500">Tin nhắn sẽ được gửi ẩn danh.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isPending}
+            className="rounded-md px-2 py-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-40"
+            aria-label="Đóng"
+          >
+            ×
+          </button>
+        </div>
+        <textarea
+          ref={textareaRef}
+          value={feedback}
+          onChange={(event) => setFeedback(event.target.value.slice(0, 2000))}
+          maxLength={2000}
+          rows={5}
+          disabled={isPending || isSent}
+          placeholder="Bạn muốn góp ý điều gì?"
+          className="w-full resize-y rounded-xl border border-zinc-700/80 bg-zinc-950/70 p-3 text-sm leading-relaxed text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none disabled:opacity-60"
+        />
+        <div className="mt-2 flex items-center justify-between gap-3">
+          <p
+            className={`text-xs ${status?.type === 'error' ? 'text-rose-300' : status?.type === 'success' ? 'text-emerald-300' : 'text-zinc-500'}`}
+            role={status?.type === 'error' ? 'alert' : 'status'}
+          >
+            {status?.message || `${feedback.length}/2000`}
+          </p>
+          <button
+            type="submit"
+            disabled={!feedback.trim() || isPending || isSent}
+            className="shrink-0 rounded-lg bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-900 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {isPending ? 'Đang gửi…' : isSent ? 'Đã gửi' : 'Gửi góp ý'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 };
@@ -919,10 +1038,14 @@ const AnonyChat = () => {
     sendReaction,
     onlineCount,
     activityEventCount,
-    eventMilestoneTypesRef
+    eventMilestoneTypesRef,
+    sendFeedback,
+    feedbackStatus,
+    clearFeedbackStatus
   } = useWebSocket(playSound);
   const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const [easterEggQueue, setEasterEggQueue] = useState([]);
   const lastCelebratedMilestonesRef = useRef({ messages: 0, events: 0 });
   const celebrationRevisionRef = useRef(0);
@@ -1088,6 +1211,23 @@ const AnonyChat = () => {
     sendMessage({ type: 'endConversation' });
   };
 
+  const handleOpenFeedback = useCallback(() => {
+    clearFeedbackStatus();
+    if (isUserConnected) {
+      sendMessage({ type: 'adminFeedback' });
+    }
+    setIsFeedbackOpen(true);
+  }, [clearFeedbackStatus, isUserConnected, sendMessage]);
+
+  const handleCloseFeedback = useCallback(() => {
+    setIsFeedbackOpen(false);
+    clearFeedbackStatus();
+  }, [clearFeedbackStatus]);
+
+  const handleSubmitFeedback = useCallback((feedback) => {
+    sendFeedback(feedback);
+  }, [sendFeedback]);
+
   return (
     <div
       className="relative flex h-[100dvh] items-center justify-center overflow-hidden bg-[#08090b] px-3 py-3 text-zinc-100 md:px-8 md:py-8"
@@ -1116,8 +1256,20 @@ const AnonyChat = () => {
           onEndConversation={handleEndConversation}
         />
         <ChatLog messages={messages} isUserConnected={isUserConnected} onReact={sendReaction} />
-        <MessageInput onSendMessage={handleSendMessage} onTyping={handleTyping} isConnected={isUserConnected} />
+        <MessageInput
+          onSendMessage={handleSendMessage}
+          onTyping={handleTyping}
+          onOpenAdmin={handleOpenFeedback}
+          isConnected={isUserConnected}
+        />
       </ChatContainer>
+      {isFeedbackOpen && (
+        <FeedbackModal
+          status={feedbackStatus}
+          onClose={handleCloseFeedback}
+          onSubmit={handleSubmitFeedback}
+        />
+      )}
     </div>
   );
 };

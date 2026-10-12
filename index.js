@@ -4,6 +4,7 @@ import { WebSocketServer } from 'ws';
 import { v4 as uuid } from 'uuid';
 import chatLogger from './logger.js';
 import { appendMessageLog } from './messageLog.js';
+import { appendFeedbackLog } from './feedbackLog.js';
 
 const app = express();
 app.use(express.static('public'));
@@ -32,6 +33,8 @@ const RECONNECT_GRACE_MS = reconnectGraceSeconds * 1000;
 const PAIR_REMATCH_COOLDOWN_MS = pairRematchCooldownSeconds * 1000;
 const MESSAGE_LOGGING_ENABLED = messageLoggingSetting === 'true';
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_FEEDBACK_LENGTH = 2000;
+const FEEDBACK_COOLDOWN_MS = 60 * 1000;
 
 function decodeImageData(data) {
   const match = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/.exec(data);
@@ -417,6 +420,56 @@ wss.on('connection', (ws, request) => {
 
     if (msg.type === 'endConversation') {
       endConversation(ws);
+      return;
+    }
+
+    if (msg.type === 'feedback') {
+      const feedback = typeof msg.data === 'string' ? msg.data.trim() : '';
+      if (!feedback || feedback.length > MAX_FEEDBACK_LENGTH) {
+        safeSend(ws, {
+          type: 'feedbackResult',
+          ok: false,
+          message: `Góp ý phải dài từ 1 đến ${MAX_FEEDBACK_LENGTH} ký tự.`
+        });
+        return;
+      }
+
+      const remainingCooldown = FEEDBACK_COOLDOWN_MS - (Date.now() - (ws.session.lastFeedbackAt ?? 0));
+      if (remainingCooldown > 0) {
+        safeSend(ws, {
+          type: 'feedbackResult',
+          ok: false,
+          message: 'Bạn vui lòng chờ một chút trước khi gửi góp ý tiếp theo.'
+        });
+        return;
+      }
+
+      try {
+        await appendFeedbackLog({
+          timestamp: new Date().toISOString(),
+          feedback
+        });
+        ws.session.lastFeedbackAt = Date.now();
+        safeSend(ws, {
+          type: 'feedbackResult',
+          ok: true,
+          message: 'Đã gửi góp ý tới admin. Cảm ơn bạn nhé!'
+        });
+      } catch (error) {
+        chatLogger.connectionError(ws.id, error);
+        safeSend(ws, {
+          type: 'feedbackResult',
+          ok: false,
+          message: 'Chưa gửi được góp ý. Bạn thử lại sau nhé.'
+        });
+      }
+      return;
+    }
+
+    if (msg.type === 'adminFeedback') {
+      if (ws.partner?.readyState === ws.partner.OPEN) {
+        safeSend(ws.partner, { system: '[SYSTEM] Bên kia đang chửi admin.' });
+      }
       return;
     }
 
