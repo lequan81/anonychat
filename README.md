@@ -6,7 +6,7 @@ A simple anonymous chat that connects you with a random stranger. Nothing fancy.
 
 * Random 1-on-1 pairing
 * Typing indicator
-* Automatic reconnect with the same chat partner for up to 60 seconds after a network interruption
+* Automatic reconnect with the same chat partner for up to 30 seconds after a network interruption by default
 * Clean dark UI with Tailwind
 
 ## Run it
@@ -17,6 +17,13 @@ node index.js
 ```
 
 Then open [http://localhost:3000](http://localhost:3000) in two tabs.
+
+Set `RECONNECT_GRACE_SECONDS` to change how long a disconnected chat session is kept. It defaults to `30` and must be a positive integer. In PowerShell, for example:
+
+```powershell
+$env:RECONNECT_GRACE_SECONDS = "60"
+node index.js
+```
 
 If you want to work on the Vite client interface, use the frontend project separately:
 

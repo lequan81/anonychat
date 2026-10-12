@@ -13,7 +13,11 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 const waiting = [];
 const connections = new Set();
 const clients = new Map();
-const RECONNECT_GRACE_MS = 60000;
+const reconnectGraceSeconds = Number(process.env.RECONNECT_GRACE_SECONDS ?? 30);
+if (!Number.isInteger(reconnectGraceSeconds) || reconnectGraceSeconds <= 0) {
+  throw new Error('RECONNECT_GRACE_SECONDS must be a positive integer');
+}
+const RECONNECT_GRACE_MS = reconnectGraceSeconds * 1000;
 
 function broadcastStats() {
   const stats = {
