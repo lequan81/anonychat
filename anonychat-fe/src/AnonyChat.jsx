@@ -1095,7 +1095,7 @@ const ChatHeader = ({ onlineCount, isUserConnected, onEndConversation, onOpenDon
 );
 
 const ChatContainer = ({ children }) => (
-  <div className="relative h-full min-h-0 w-full max-w-[28rem] rounded-[1.3rem] bg-[#0b0b0d] p-1.5 md:max-w-xl md:rounded-[1.6rem] md:p-2">
+  <div className="relative h-full min-h-0 w-full max-w-none rounded-none bg-[#0b0b0d] p-0 xl:max-w-xl xl:rounded-[1.6rem] xl:p-2">
     <div className="relative flex h-full min-h-0 flex-col gap-2 md:gap-3">{children}</div>
   </div>
 );
@@ -1339,7 +1339,7 @@ const AnonyChat = () => {
 
   return (
     <div
-      className="relative flex h-[100dvh] items-center justify-center overflow-hidden bg-[#08090b] px-3 py-3 text-zinc-100 md:px-8 md:py-8"
+      className="relative flex h-[100dvh] items-center justify-center overflow-hidden bg-[#08090b] px-1 py-3 text-zinc-100 md:px-2 md:py-8 xl:px-8"
       style={{
         fontFamily: 'Maple Mono, monospace',
         height: `${viewportHeight}px`,
