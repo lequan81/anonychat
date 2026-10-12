@@ -42,6 +42,20 @@ input {
   font: inherit;
 }
 
+@keyframes chat-message-arrive {
+  from {
+    transform: scale(0);
+  }
+
+  to {
+    transform: scale(1);
+  }
+}
+
+.animate-chat-message {
+  animation: chat-message-arrive 200ms ease-in-out both;
+}
+
 @keyframes reaction-spring {
   0% {
     transform: scale(0.15) rotate(-12deg);
@@ -71,6 +85,7 @@ input {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .animate-chat-message,
   .animate-reaction-spring {
     animation: none;
   }

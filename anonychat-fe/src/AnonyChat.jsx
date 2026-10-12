@@ -185,19 +185,12 @@ const useWebSocket = (playSound) => {
             );
           }
 
-          if (msg.from === 'stranger') {
-            window.clearTimeout(typingTimeoutRef.current);
-          }
+          window.clearTimeout(typingTimeoutRef.current);
 
-          setMessages((prev) => {
-            if (msg.from === 'stranger') {
-              const typingIndex = prev.findLastIndex((item) => item.type === 'typing');
-              if (typingIndex >= 0) {
-                return prev.map((item, index) => index === typingIndex ? incomingMessage : item);
-              }
-            }
-            return [...prev, incomingMessage];
-          });
+          setMessages((prev) => [
+            ...prev.filter((item) => item.type !== 'typing'),
+            incomingMessage
+          ]);
         }
 
         if (msg.type === 'typing') {
@@ -385,7 +378,7 @@ const ChatMessage = ({
           type="button"
           aria-label="Chạm hoặc nhấn Enter để chọn cảm xúc"
           onClick={() => setPickerOpen(true)}
-          className={`w-fit max-w-full break-words rounded-[1.35rem] border px-3 py-2.5 text-sm leading-relaxed transition-colors duration-200 ${isMine
+          className={`animate-chat-message ${isMine ? 'origin-bottom-right' : 'origin-bottom-left'} w-fit max-w-full break-words rounded-[1.35rem] border px-3 py-2.5 text-sm leading-relaxed transition-colors duration-200 ${isMine
             ? delivered
               ? 'ml-auto border-emerald-500/20 bg-emerald-500/[0.035] text-zinc-100'
               : 'ml-auto border-amber-500/25 bg-amber-500/[0.06] text-zinc-100'
