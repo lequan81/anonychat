@@ -60,7 +60,6 @@ const useAudio = () => {
 const useWebSocket = (playSound) => {
   const [ws, setWs] = useState(null);
   const [isUserConnected, setIsUserConnected] = useState(false);
-  const [peerIdPrefix, setPeerIdPrefix] = useState('');
   const [messages, setMessages] = useState([]);
   const [onlineCount, setOnlineCount] = useState(0);
   const [activityEventCount, setActivityEventCount] = useState(0);
@@ -122,10 +121,6 @@ const useWebSocket = (playSound) => {
 
         if (msg.type === 'config' && Number.isInteger(msg.reconnectGraceSeconds) && msg.reconnectGraceSeconds > 0) {
           reconnectGraceRef.current = msg.reconnectGraceSeconds;
-        }
-
-        if (msg.type === 'peer' && typeof msg.uuidPrefix === 'string' && /^[0-9a-f]{4}$/i.test(msg.uuidPrefix)) {
-          setPeerIdPrefix(msg.uuidPrefix.toUpperCase());
         }
 
         if (msg.type === 'stats' && msg.onlineCount !== undefined) {
@@ -191,7 +186,6 @@ const useWebSocket = (playSound) => {
 
         if (msg.system?.includes('Waiting for a stranger') || msg.system?.includes('No partner available')) {
           setIsUserConnected(false);
-          setPeerIdPrefix('');
           if (msg.system.includes('Waiting for a stranger')) {
             isReconnecting = false;
           }
@@ -199,7 +193,6 @@ const useWebSocket = (playSound) => {
 
         if (msg.system?.toLowerCase().includes('conversation ended')) {
           setIsUserConnected(false);
-          setPeerIdPrefix('');
           isReconnecting = false;
         }
 
@@ -209,7 +202,6 @@ const useWebSocket = (playSound) => {
 
         if (msg.system?.includes('disconnected')) {
           setIsUserConnected(false);
-          setPeerIdPrefix('');
           playSound('disconnect');
         }
 
@@ -399,7 +391,6 @@ const useWebSocket = (playSound) => {
 
   return {
     isUserConnected,
-    peerIdPrefix,
     messages,
     sendMessage,
     sendReaction,
@@ -1067,7 +1058,7 @@ const DonationModal = ({ onClose }) => {
   );
 };
 
-const ChatHeader = ({ onlineCount, isUserConnected, peerIdPrefix, onEndConversation, onOpenDonation }) => (
+const ChatHeader = ({ onlineCount, isUserConnected, onEndConversation, onOpenDonation }) => (
   <div className="flex shrink-0 items-center justify-between gap-1.5 rounded-[1.05rem] border border-zinc-800/80 bg-[#111214]/80 px-2.5 py-2.5 sm:gap-2 md:px-4 md:py-3">
     <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
       <span
@@ -1090,11 +1081,6 @@ const ChatHeader = ({ onlineCount, isUserConnected, peerIdPrefix, onEndConversat
     </div>
     <div className="flex min-w-0 items-center justify-end gap-1 sm:gap-2">
       <OnlineCounter count={onlineCount} />
-      {isUserConnected && peerIdPrefix && (
-        <span className="flex min-h-7 shrink-0 items-center rounded-full border border-sky-400/25 bg-sky-950/20 px-1.5 font-mono text-[9px] tracking-[0.08em] text-sky-100/80 sm:min-h-9 sm:px-2 sm:text-[10px] sm:tracking-[0.12em]">
-          {peerIdPrefix}
-        </span>
-      )}
       {isUserConnected && (
         <button
           type="button"
@@ -1118,7 +1104,6 @@ const AnonyChat = () => {
   const { playSound } = useAudio();
   const {
     isUserConnected,
-    peerIdPrefix,
     messages,
     sendMessage,
     sendReaction,
@@ -1382,7 +1367,6 @@ const AnonyChat = () => {
         <ChatHeader
           onlineCount={onlineCount}
           isUserConnected={isUserConnected}
-          peerIdPrefix={peerIdPrefix}
           onEndConversation={handleEndConversation}
           onOpenDonation={() => setIsDonationOpen(true)}
         />

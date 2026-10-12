@@ -175,8 +175,6 @@ function matchWaiting() {
       continue;
     }
 
-    safeSend(a, { type: 'peer', uuidPrefix: b.session.clientId.slice(0, 4) });
-    safeSend(b, { type: 'peer', uuidPrefix: a.session.clientId.slice(0, 4) });
     safeSend(a, { system: '[SYSTEM] Connected to a stranger.' });
     safeSend(b, { system: '[SYSTEM] Connected to a stranger.' });
     i--;
@@ -377,12 +375,9 @@ wss.on('connection', (ws, request) => {
     if (partner?.readyState === partner.OPEN) {
       ws.partner = partner;
       partner.partner = ws;
-      safeSend(ws, { type: 'peer', uuidPrefix: partnerSession.clientId.slice(0, 4) });
-      safeSend(partner, { type: 'peer', uuidPrefix: session.clientId.slice(0, 4) });
       safeSend(ws, { system: '[SYSTEM] Reconnected to your stranger.' });
       safeSend(partner, { system: '[SYSTEM] Stranger reconnected.' });
     } else {
-      safeSend(ws, { type: 'peer', uuidPrefix: partnerSession.clientId.slice(0, 4) });
       safeSend(ws, { system: '[SYSTEM] Stranger connection lost. Reconnecting…' });
     }
   } else if (isReconnect && session.waiting) {
