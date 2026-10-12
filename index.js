@@ -3,21 +3,50 @@ import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import { v4 as uuid } from 'uuid';
 import chatLogger from './logger.js';
+import { appendMessageLog } from './messageLog.js';
 
 const app = express();
 app.use(express.static('public'));
 
 const server = createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 7 * 1024 * 1024 });
 
 const waiting = [];
 const connections = new Set();
 const clients = new Map();
+let isShuttingDown = false;
 const reconnectGraceSeconds = Number(process.env.RECONNECT_GRACE_SECONDS ?? 30);
+const messageLoggingSetting = (process.env.MESSAGE_LOGGING_ENABLED ?? 'true').toLowerCase();
 if (!Number.isInteger(reconnectGraceSeconds) || reconnectGraceSeconds <= 0) {
   throw new Error('RECONNECT_GRACE_SECONDS must be a positive integer');
 }
+if (messageLoggingSetting !== 'true' && messageLoggingSetting !== 'false') {
+  throw new Error('MESSAGE_LOGGING_ENABLED must be true or false');
+}
 const RECONNECT_GRACE_MS = reconnectGraceSeconds * 1000;
+const MESSAGE_LOGGING_ENABLED = messageLoggingSetting === 'true';
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+function decodeImageData(data) {
+  const match = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/.exec(data);
+  if (!match || match[1].length % 4 !== 0) {
+    return null;
+  }
+
+  const imageBytes = Buffer.from(match[1], 'base64');
+  if (
+    imageBytes.length === 0
+    || imageBytes.length > MAX_IMAGE_BYTES
+    || imageBytes.toString('base64') !== match[1]
+    || imageBytes[0] !== 0xff
+    || imageBytes[1] !== 0xd8
+    || imageBytes[2] !== 0xff
+  ) {
+    return null;
+  }
+
+  return imageBytes;
+}
 
 function broadcastStats() {
   const stats = {
@@ -147,12 +176,17 @@ function disconnect(ws) {
     const partnerSession = clients.get(session.partnerId);
     const partner = partnerSession?.ws;
     if (partner && partner.readyState === partner.OPEN) {
-      safeSend(partner, { system: '[SYSTEM] Stranger connection lost. Reconnecting…' });
+      safeSend(partner, {
+        system: '[SYSTEM] Stranger connection lost. Reconnecting…',
+        reconnectSeconds: reconnectGraceSeconds
+      });
     }
   }
 
   clearTimeout(session.reconnectTimer);
-  session.reconnectTimer = setTimeout(() => expireSession(session), RECONNECT_GRACE_MS);
+  session.reconnectTimer = isShuttingDown
+    ? null
+    : setTimeout(() => expireSession(session), RECONNECT_GRACE_MS);
   updateConnectionStats();
 }
 
@@ -176,6 +210,11 @@ wss.on('connection', (ws, request) => {
   ws.id = uuid();
   let session = clients.get(clientId);
   const isReconnect = Boolean(session);
+
+  if (session?.ws && (session.ws.readyState === session.ws.OPEN || session.ws.readyState === session.ws.CONNECTING)) {
+    ws.close(4001, 'Client already connected');
+    return;
+  }
 
   if (session) {
     clearTimeout(session.reconnectTimer);
@@ -210,6 +249,11 @@ wss.on('connection', (ws, request) => {
   connections.add(ws);
   ws.isAlive = true;
 
+  safeSend(ws, {
+    type: 'config',
+    reconnectGraceSeconds
+  });
+
   chatLogger.userConnected(ws.id);
 
   if (isReconnect && session.partnerId) {
@@ -219,9 +263,12 @@ wss.on('connection', (ws, request) => {
     if (partner?.readyState === partner.OPEN) {
       ws.partner = partner;
       partner.partner = ws;
+      safeSend(ws, { type: 'peer', uuidPrefix: partnerSession.clientId.slice(0, 4) });
+      safeSend(partner, { type: 'peer', uuidPrefix: session.clientId.slice(0, 4) });
       safeSend(ws, { system: '[SYSTEM] Reconnected to your stranger.' });
       safeSend(partner, { system: '[SYSTEM] Stranger reconnected.' });
     } else {
+      safeSend(ws, { type: 'peer', uuidPrefix: partnerSession.clientId.slice(0, 4) });
       safeSend(ws, { system: '[SYSTEM] Stranger connection lost. Reconnecting…' });
     }
   } else if (isReconnect && session.waiting) {
@@ -262,6 +309,8 @@ wss.on('connection', (ws, request) => {
       }
 
       if (other && pair(ws, other)) {
+        safeSend(ws, { type: 'peer', uuidPrefix: other.session.clientId.slice(0, 4) });
+        safeSend(other, { type: 'peer', uuidPrefix: session.clientId.slice(0, 4) });
         safeSend(ws, { system: '[SYSTEM] Connected to a stranger.' });
         safeSend(other, { system: '[SYSTEM] Connected to a stranger.' });
       } else {
@@ -279,7 +328,7 @@ wss.on('connection', (ws, request) => {
   // Update stats
   updateConnectionStats();
 
-  ws.on('message', (data) => {
+  ws.on('message', async (data) => {
     ws.isAlive = true;
 
     let msg;
@@ -304,23 +353,56 @@ wss.on('connection', (ws, request) => {
       return;
     }
 
-    if (msg.type === 'text' && msg.data) {
-      const messageId = msg.id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
-      chatLogger.messageSent(ws.id, ws.partner.id, msg.data.length);
-      
-      // Send to sender with message ID
-      safeSend(ws, { 
-        type: 'text', 
-        data: msg.data, 
+    const isTextMessage = msg.type === 'text' && typeof msg.data === 'string' && msg.data.trim().length > 0;
+    const imageBytes = msg.type === 'image' && typeof msg.data === 'string'
+      ? decodeImageData(msg.data)
+      : null;
+
+    if (msg.type === 'image' && !imageBytes) {
+      safeSend(ws, { system: '[SYSTEM] Image must be a valid JPEG under 5 MB.' });
+      return;
+    }
+
+    if (isTextMessage || imageBytes) {
+      const messageId = typeof msg.id === 'string' && msg.id.length <= 100
+        ? msg.id
+        : `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const recipient = ws.partner;
+      const messageLength = isTextMessage ? Buffer.byteLength(msg.data, 'utf8') : imageBytes.length;
+
+      if (MESSAGE_LOGGING_ENABLED) {
+        try {
+          await appendMessageLog({
+            timestamp: new Date().toISOString(),
+            fromUuid: ws.session.clientId,
+            toUuid: recipient.session.clientId,
+            type: isTextMessage ? 'text' : 'image',
+            message: msg.data
+          });
+        } catch (error) {
+          chatLogger.connectionError(ws.id, error);
+          safeSend(ws, { system: '[SYSTEM] Message could not be saved. It was not sent.' });
+          return;
+        }
+      }
+
+      if (ws.partner !== recipient || recipient.readyState !== recipient.OPEN) {
+        safeSend(ws, { system: '[SYSTEM] No partner available.' });
+        return;
+      }
+
+      chatLogger.messageSent(ws.id, recipient.id, messageLength);
+
+      safeSend(ws, {
+        type: isTextMessage ? 'text' : 'image',
+        data: msg.data,
         from: 'self',
         id: messageId
       });
-      
-      // Send to partner with message ID
-      safeSend(ws.partner, { 
-        type: 'text', 
-        data: msg.data, 
+
+      safeSend(recipient, {
+        type: isTextMessage ? 'text' : 'image',
+        data: msg.data,
         from: 'stranger',
         id: messageId
       });
@@ -379,22 +461,34 @@ const statsBroadcast = setInterval(() => {
   broadcastStats();
 }, 10000); // Broadcast every 10 seconds
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  chatLogger.serverStopped();
-  clearInterval(heartbeat);
-  clearInterval(cleanup);
-  clearInterval(statsBroadcast);
-  server.close();
-});
+function shutdown() {
+  if (isShuttingDown) {
+    wss.clients.forEach((ws) => ws.terminate());
+    return;
+  }
 
-process.on('SIGINT', () => {
+  isShuttingDown = true;
   chatLogger.serverStopped();
   clearInterval(heartbeat);
   clearInterval(cleanup);
   clearInterval(statsBroadcast);
+
+  clients.forEach((session) => {
+    clearTimeout(session.reconnectTimer);
+    session.reconnectTimer = null;
+  });
+
   server.close();
-});
+  wss.clients.forEach((ws) => ws.close(1001, 'Server shutting down'));
+
+  const forceClose = setTimeout(() => {
+    wss.clients.forEach((ws) => ws.terminate());
+  }, 5000);
+  forceClose.unref();
+}
+
+process.once('SIGTERM', shutdown);
+process.once('SIGINT', shutdown);
 
 wss.on('close', () => {
   clearInterval(heartbeat);
