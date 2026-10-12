@@ -11,7 +11,7 @@ A simple anonymous chat that connects you with a random stranger. Nothing fancy.
 * Automatically reconnects to the same chat partner after a network interruption, preserving the chat history; defaults to a 30-second reconnect window with a timeline countdown
 * The “Thoát” button ends the current conversation for both participants and returns them to matching; that UUID pair cannot be matched again during the 15-second cooldown by default
 * Shows a color-only connection indicator before the app name and the first four characters of the other participant's UUID in the header; the full UUID remains between the client and server for reconnect
-* Allows only one active connection per client UUID; opening the same chat in another tab is rejected without disconnecting the active tab
+* Allows only one active connection per client UUID; a reloaded or newly opened tab takes over the session and the older connection closes without disturbing the chat partner
 * Clean dark UI with Tailwind
 
 ## Run it
@@ -36,14 +36,17 @@ docker run --name anonychat --init --restart unless-stopped \
   anonychat
 ```
 
-The Dockerfile uses separate cached stages for frontend dependencies, the Vite build, and production server dependencies. The final image contains only the built frontend and production server dependencies, runs as the unprivileged `node` user, and reports container health through `/healthz`. Keep `/app/logs` on a persistent volume if application logs or feedback submissions must survive container replacement. Message-content logging is enabled by the application by default; disable it as shown above if plaintext conversation logs are not wanted. Configure `RECONNECT_GRACE_SECONDS` and `PAIR_REMATCH_COOLDOWN_SECONDS` with `-e` as needed.
+The Dockerfile uses separate cached stages for frontend dependencies, the Vite build, and production server dependencies. The final image contains only the built frontend and production server dependencies, runs as the unprivileged `node` user, and reports container health through `/healthz`. Keep `/app/logs` on a persistent volume if application logs or feedback submissions must survive container replacement. Message-content logging is enabled by the application by default; disable it as shown above if plaintext conversation logs are not wanted. Configure `WS_HEARTBEAT_INTERVAL_SECONDS`, `RECONNECT_GRACE_SECONDS`, and `PAIR_REMATCH_COOLDOWN_SECONDS` with `-e` as needed.
 
 The admin console is available at `/admin`. Set a strong `ADMIN_PASSWORD` environment variable in the server or container deployment configuration to enable admin login; without it, admin login is disabled. After logging in, an admin can broadcast a system announcement to currently connected users and read feedback users have submitted. The console does not open a chat connection or expose private conversation messages. Admin sessions expire after eight hours. Keep the password in deployment secrets and serve the console over HTTPS.
 
-Set `RECONNECT_GRACE_SECONDS` to change how long a disconnected chat session is kept. It defaults to `30` and must be a positive integer. The chat timeline shows a countdown using this server setting while reconnecting. In PowerShell, for example:
+The server sends WebSocket ping frames every 15 seconds by default (`WS_HEARTBEAT_INTERVAL_SECONDS`) to keep proxy connections active. It terminates a socket after three consecutive missed pong checks. Set the interval lower than your reverse proxy's idle timeout; the setting must be a positive integer.
+
+Set `RECONNECT_GRACE_SECONDS` to change how long a disconnected chat session is kept. It defaults to `120` seconds and must be a positive integer. This gives clients time to retry through brief network or proxy outages; the chat timeline shows a countdown using this server setting while reconnecting. For example, to use a 10-second heartbeat and a 2-minute reconnect window in PowerShell:
 
 ```powershell
-$env:RECONNECT_GRACE_SECONDS = "60"
+$env:WS_HEARTBEAT_INTERVAL_SECONDS = "10"
+$env:RECONNECT_GRACE_SECONDS = "120"
 $env:PAIR_REMATCH_COOLDOWN_SECONDS = "15"
 $env:ADMIN_PASSWORD = (Read-Host "Admin password")
 node index.js

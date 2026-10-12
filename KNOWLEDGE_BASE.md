@@ -55,7 +55,7 @@ The client listens for messages such as:
 - `typing` notifications
 - `receipt` acknowledgements
 
-The client can reconnect to the same chat session after a transient network interruption, with an exponential retry delay and a server-configured grace period (`RECONNECT_GRACE_SECONDS`, default 30). The client keeps the conversation history during reconnect. The server checks WebSocket heartbeat every 30 seconds and terminates a socket only after three consecutive missed heartbeat responses; incoming messages and pong frames reset the missed count. A second active connection using the same client UUID is rejected with close code 4001; the client does not retry that duplicate-tab rejection.
+The client can reconnect to the same chat session after a transient network interruption or page reload, with an exponential retry delay and a server-configured grace period (`RECONNECT_GRACE_SECONDS`, default 30). The client keeps the conversation history during transient reconnects; a full page reload resets the local display history but restores the same server-side pairing when the client reconnects within the grace period. A new connection using an existing client UUID takes over the session and closes its previous socket, preserving the partner pairing and waiting-queue position. The server checks WebSocket heartbeat every 30 seconds and terminates a socket only after three consecutive missed heartbeat responses; incoming messages and pong frames reset the missed count.
 
 Text and JPEG image messages are echoed to the sender and forwarded to the partner. Images are limited to 5 MiB by the server and are resized on the client before sending. The “Thoát” action ends the conversation for both participants and places them back in matching.
 

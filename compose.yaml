@@ -9,6 +9,14 @@ services:
       - "traefik.http.routers.anonychat.entrypoints=websecure"
       - "traefik.http.routers.anonychat.tls.certresolver=myresolver"
       - "traefik.http.services.anonychat.loadbalancer.server.port=3000"
+      # Disable response buffering so WebSocket frames are forwarded immediately
+      - "traefik.http.services.anonychat.loadbalancer.responseForwarding.flushInterval=-1"
+      # Remove idle/response timeouts for WebSocket connections:
+      # responseHeaderTimeout=0 disables the per-request response-header deadline on
+      # the Traefik → backend leg, preventing Traefik from closing WS connections
+      # that are idle (no frame) for longer than the default ~60 s.
+      - "traefik.http.serversTransports.anonychat-ws-transport.forwardingTimeouts.responseHeaderTimeout=0"
+      - "traefik.http.services.anonychat.loadbalancer.serversTransport=anonychat-ws-transport"
     networks:
       - traefik_default
     restart: unless-stopped

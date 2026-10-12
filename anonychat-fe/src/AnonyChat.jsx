@@ -91,10 +91,15 @@ const useWebSocket = (playSound) => {
     const wsUrl = `${protocol}//${window.location.host}/ws?clientId=${encodeURIComponent(clientId)}`;
     let websocket;
     let reconnectTimeout;
+    let keepaliveInterval;
     let reconnectDelay = 500;
     let disposed = false;
     let hasLostConnection = false;
     let isReconnecting = false;
+
+    // Application-level keepalive: send a ping every 20s so proxy (Traefik/Nginx)
+    // doesn't close the idle WebSocket before the server's WS ping fires.
+    const CLIENT_KEEPALIVE_MS = 20_000;
 
     const connect = () => {
       if (disposed) return;
@@ -110,6 +115,14 @@ const useWebSocket = (playSound) => {
             ? { ...message, reconnectEndedAt: Date.now() }
             : message
         )));
+
+        // Start application-level keepalive to prevent proxy idle-timeout
+        window.clearInterval(keepaliveInterval);
+        keepaliveInterval = window.setInterval(() => {
+          if (websocket.readyState === WebSocket.OPEN) {
+            websocket.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, CLIENT_KEEPALIVE_MS);
       };
 
       websocket.onmessage = (event) => {
@@ -299,14 +312,14 @@ const useWebSocket = (playSound) => {
       websocket.onclose = (event) => {
         if (disposed) return;
 
+        window.clearInterval(keepaliveInterval);
         setWs(null);
         setIsUserConnected(false);
-        if (event.code === 4001 && event.reason === 'Client already connected') {
-          setPeerIdPrefix('');
+        if (event.code === 4001 && event.reason === 'Reconnected from this client') {
           setMessages((prev) => [
             ...prev,
             {
-              system: '[SYSTEM] Cuộc trò chuyện này đang mở ở tab khác.',
+              system: '[SYSTEM] Phiên chat đã được tiếp tục ở một kết nối khác.',
               timestamp: Date.now()
             }
           ]);
@@ -329,7 +342,8 @@ const useWebSocket = (playSound) => {
         reconnectTimeout = window.setTimeout(() => {
           connect();
         }, reconnectDelay);
-        reconnectDelay = Math.min(reconnectDelay * 2, 10000);
+        // Cap at 5s (not 10s) so we reconnect within the 120s server grace window
+        reconnectDelay = Math.min(reconnectDelay * 2, 5000);
       };
 
       websocket.onerror = (error) => {
@@ -343,6 +357,7 @@ const useWebSocket = (playSound) => {
     return () => {
       disposed = true;
       window.clearTimeout(reconnectTimeout);
+      window.clearInterval(keepaliveInterval);
       window.clearTimeout(typingTimeoutRef.current);
       if (websocket && websocket.readyState !== WebSocket.CLOSING && websocket.readyState !== WebSocket.CLOSED) {
         websocket.close();

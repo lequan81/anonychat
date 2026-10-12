@@ -28,11 +28,19 @@ let isShuttingDown = false;
 app.get('/healthz', (request, response) => {
   response.status(isShuttingDown ? 503 : 200).type('text/plain').send(isShuttingDown ? 'shutting down' : 'ok');
 });
-const reconnectGraceSeconds = Number(process.env.RECONNECT_GRACE_SECONDS ?? 30);
+const reconnectGraceSeconds = Number(process.env.RECONNECT_GRACE_SECONDS ?? 120);
+const heartbeatIntervalSeconds = Number(process.env.WS_HEARTBEAT_INTERVAL_SECONDS ?? 10);
+const heartbeatMissedThreshold = Number(process.env.WS_HEARTBEAT_MISSED_THRESHOLD ?? 2);
 const pairRematchCooldownSeconds = Number(process.env.PAIR_REMATCH_COOLDOWN_SECONDS ?? 15);
 const messageLoggingSetting = (process.env.MESSAGE_LOGGING_ENABLED ?? 'true').toLowerCase();
 if (!Number.isInteger(reconnectGraceSeconds) || reconnectGraceSeconds <= 0) {
   throw new Error('RECONNECT_GRACE_SECONDS must be a positive integer');
+}
+if (!Number.isInteger(heartbeatIntervalSeconds) || heartbeatIntervalSeconds <= 0) {
+  throw new Error('WS_HEARTBEAT_INTERVAL_SECONDS must be a positive integer');
+}
+if (!Number.isInteger(heartbeatMissedThreshold) || heartbeatMissedThreshold < 1) {
+  throw new Error('WS_HEARTBEAT_MISSED_THRESHOLD must be a positive integer >= 1');
 }
 if (!Number.isInteger(pairRematchCooldownSeconds) || pairRematchCooldownSeconds <= 0) {
   throw new Error('PAIR_REMATCH_COOLDOWN_SECONDS must be a positive integer');
@@ -41,6 +49,7 @@ if (messageLoggingSetting !== 'true' && messageLoggingSetting !== 'false') {
   throw new Error('MESSAGE_LOGGING_ENABLED must be true or false');
 }
 const RECONNECT_GRACE_MS = reconnectGraceSeconds * 1000;
+const WS_HEARTBEAT_INTERVAL_MS = heartbeatIntervalSeconds * 1000;
 const PAIR_REMATCH_COOLDOWN_MS = pairRematchCooldownSeconds * 1000;
 const MESSAGE_LOGGING_ENABLED = messageLoggingSetting === 'true';
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -440,11 +449,6 @@ wss.on('connection', (ws, request) => {
   let session = clients.get(clientId);
   const isReconnect = Boolean(session);
 
-  if (session?.ws && (session.ws.readyState === session.ws.OPEN || session.ws.readyState === session.ws.CONNECTING)) {
-    ws.close(4001, 'Client already connected');
-    return;
-  }
-
   if (session) {
     clearTimeout(session.reconnectTimer);
 
@@ -537,6 +541,12 @@ wss.on('connection', (ws, request) => {
 
     if (msg.type === 'endConversation') {
       endConversation(ws);
+      return;
+    }
+
+    // Application-level keepalive: client sends {type:"ping"} to keep proxy connections alive.
+    if (msg.type === 'ping') {
+      safeSend(ws, { type: 'pong' });
       return;
     }
 
@@ -720,7 +730,7 @@ const heartbeat = setInterval(() => {
   connections.forEach((ws) => {
     if (ws.isAlive === false) {
       ws.missedHeartbeats = (ws.missedHeartbeats ?? 0) + 1;
-      if (ws.missedHeartbeats >= 3) {
+      if (ws.missedHeartbeats >= heartbeatMissedThreshold) {
         deadCount++;
         disconnect(ws);
         ws.terminate();
@@ -738,7 +748,7 @@ const heartbeat = setInterval(() => {
   });
 
   chatLogger.heartbeatCheck(aliveCount, deadCount);
-}, 30000); // Check every 30 seconds
+}, WS_HEARTBEAT_INTERVAL_MS);
 
 // Cleanup interval
 const cleanup = setInterval(() => {
