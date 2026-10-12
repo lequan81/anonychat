@@ -8,7 +8,7 @@ const app = express();
 app.use(express.static('public'));
 
 const server = createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, path: '/ws' });
 
 const waiting = [];
 const connections = new Set();
