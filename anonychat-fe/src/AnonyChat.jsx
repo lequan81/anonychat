@@ -204,7 +204,7 @@ const OnlineCounter = ({ count }) => {
       }`}
     >
       <span className="h-2 w-2 rounded-full bg-emerald-400" />
-      {count || 0} trực tuyến
+      {count ?? 0} trực tuyến
     </div>
   );
 };
