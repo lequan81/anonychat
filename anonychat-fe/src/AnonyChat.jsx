@@ -992,7 +992,82 @@ const FeedbackModal = ({ status, onClose, onSubmit }) => {
   );
 };
 
-const ChatHeader = ({ onlineCount, isUserConnected, peerIdPrefix, onEndConversation }) => (
+const DonationModal = ({ onClose }) => {
+  const closeButtonRef = useRef(null);
+
+  useEffect(() => {
+    const previouslyFocusedElement = document.activeElement;
+    closeButtonRef.current?.focus();
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        closeButtonRef.current?.focus();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      if (previouslyFocusedElement instanceof HTMLElement) {
+        previouslyFocusedElement.focus();
+      }
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      className="donation-modal-backdrop fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="donation-title"
+        aria-describedby="donation-description"
+        className="donation-modal-card relative w-full max-w-sm rounded-[1.75rem] border border-zinc-700/70 bg-[#111214] p-5 text-center shadow-[0_24px_80px_rgba(0,0,0,0.5)] sm:p-6"
+      >
+        <button
+          ref={closeButtonRef}
+          type="button"
+          onClick={onClose}
+          className="absolute right-3 top-3 inline-flex h-9 w-9 items-center justify-center rounded-full text-xl leading-none text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300"
+          aria-label="Đóng cửa sổ ủng hộ"
+        >
+          ×
+        </button>
+        <div className="mx-auto mb-3 inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-400/10 text-rose-300">
+          <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5" aria-hidden="true">
+            <path d="M12 21s-8.25-4.73-8.25-11.06A4.69 4.69 0 0 1 12 7.26a4.69 4.69 0 0 1 8.25 2.68C20.25 16.27 12 21 12 21Z" />
+          </svg>
+        </div>
+        <h2 id="donation-title" className="text-base font-semibold text-zinc-100">
+          Ủng hộ AnonyChat
+        </h2>
+        <p id="donation-description" className="mx-auto mt-1.5 max-w-[17rem] text-xs leading-relaxed text-zinc-400">
+          Quét mã QR bằng ứng dụng ngân hàng để gửi một chút yêu thương.
+        </p>
+        <div className="mx-auto mt-5 w-full max-w-[18rem] overflow-hidden rounded-2xl bg-white p-2.5">
+          <img
+            src="/donate-qr-crop.jpg"
+            alt="Mã QR VietQR để chuyển khoản qua ngân hàng MB"
+            className="block aspect-square w-full rounded-xl object-cover"
+          />
+        </div>
+        <p className="mt-3 text-[10px] tracking-wide text-zinc-500">
+          Cảm ơn bạn đã đồng hành 💗
+        </p>
+      </section>
+    </div>
+  );
+};
+
+const ChatHeader = ({ onlineCount, isUserConnected, peerIdPrefix, onEndConversation, onOpenDonation }) => (
   <div className="flex shrink-0 items-center justify-between gap-1.5 rounded-[1.05rem] border border-zinc-800/80 bg-[#111214]/80 px-2.5 py-2.5 sm:gap-2 md:px-4 md:py-3">
     <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
       <span
@@ -1001,6 +1076,17 @@ const ChatHeader = ({ onlineCount, isUserConnected, peerIdPrefix, onEndConversat
         aria-label={isUserConnected ? 'Đã kết nối' : 'Đang tìm người chat'}
       />
       <p className="whitespace-nowrap text-[9px] font-medium uppercase tracking-[0.08em] text-zinc-500 sm:text-[10px] sm:tracking-[0.12em]">anonychat</p>
+      <button
+        type="button"
+        onClick={onOpenDonation}
+        className="inline-flex min-h-8 shrink-0 items-center justify-center gap-1 rounded-full border border-rose-300/20 bg-rose-400/10 px-2 text-[10px] font-medium text-rose-200 transition-colors hover:border-rose-300/40 hover:bg-rose-400/20 active:scale-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300"
+        aria-label="Ủng hộ AnonyChat"
+      >
+        <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5" aria-hidden="true">
+          <path d="M12 21s-8.25-4.73-8.25-11.06A4.69 4.69 0 0 1 12 7.26a4.69 4.69 0 0 1 8.25 2.68C20.25 16.27 12 21 12 21Z" />
+        </svg>
+        <span className="hidden min-[380px]:inline">Ủng hộ</span>
+      </button>
     </div>
     <div className="flex min-w-0 items-center justify-end gap-1 sm:gap-2">
       <OnlineCounter count={onlineCount} />
@@ -1046,6 +1132,7 @@ const AnonyChat = () => {
   const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
+  const [isDonationOpen, setIsDonationOpen] = useState(false);
   const [easterEggQueue, setEasterEggQueue] = useState([]);
   const lastCelebratedMilestonesRef = useRef({ messages: 0, events: 0 });
   const celebrationRevisionRef = useRef(0);
@@ -1228,6 +1315,10 @@ const AnonyChat = () => {
     sendFeedback(feedback);
   }, [sendFeedback]);
 
+  const handleCloseDonation = useCallback(() => {
+    setIsDonationOpen(false);
+  }, []);
+
   return (
     <div
       className="relative flex h-[100dvh] items-center justify-center overflow-hidden bg-[#08090b] px-3 py-3 text-zinc-100 md:px-8 md:py-8"
@@ -1254,6 +1345,7 @@ const AnonyChat = () => {
           isUserConnected={isUserConnected}
           peerIdPrefix={peerIdPrefix}
           onEndConversation={handleEndConversation}
+          onOpenDonation={() => setIsDonationOpen(true)}
         />
         <ChatLog messages={messages} isUserConnected={isUserConnected} onReact={sendReaction} />
         <MessageInput
@@ -1270,6 +1362,7 @@ const AnonyChat = () => {
           onSubmit={handleSubmitFeedback}
         />
       )}
+      {isDonationOpen && <DonationModal onClose={handleCloseDonation} />}
     </div>
   );
 };
