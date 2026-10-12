@@ -841,12 +841,13 @@ const MessageInput = ({ onSendMessage, onTyping, onOpenAdmin, isConnected }) => 
   };
 
   const submitMessage = () => {
-    if (!message.trim() || !isConnected) return;
+    if (!message.trim()) return;
     if (message.trim().toLowerCase() === '/admin') {
       setMessage('');
-      onOpenAdmin();
+      window.location.href = '/admin';
       return;
     }
+    if (!isConnected) return;
 
     const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     onSendMessage({
@@ -1540,6 +1541,7 @@ const AdminConsole = () => {
   const [isFeedbackLoading, setIsFeedbackLoading] = useState(false);
   const [feedbackError, setFeedbackError] = useState('');
   const [status, setStatus] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [adminStats, setAdminStats] = useState(null);
   const [isAdminStatsLoading, setIsAdminStatsLoading] = useState(false);
 
