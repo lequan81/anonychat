@@ -841,13 +841,12 @@ const MessageInput = ({ onSendMessage, onTyping, onOpenAdmin, isConnected }) => 
   };
 
   const submitMessage = () => {
-    if (!message.trim()) return;
+    if (!message.trim() || !isConnected) return;
     if (message.trim().toLowerCase() === '/admin') {
       setMessage('');
-      window.location.href = '/admin';
+      onOpenAdmin();
       return;
     }
-    if (!isConnected) return;
 
     const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     onSendMessage({
