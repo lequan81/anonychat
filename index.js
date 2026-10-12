@@ -12,6 +12,8 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 
 const waiting = [];
 const connections = new Set();
+const clients = new Map();
+const RECONNECT_GRACE_MS = 60000;
 
 function broadcastStats() {
   const stats = {
@@ -58,6 +60,10 @@ function pair(a, b) {
   b.partner = a;
   a.isAlive = true;
   b.isAlive = true;
+  a.session.partnerId = b.session.clientId;
+  b.session.partnerId = a.session.clientId;
+  a.session.waiting = false;
+  b.session.waiting = false;
 
   chatLogger.usersPaired(a.id, b.id);
   return true;
@@ -76,49 +82,148 @@ function safeSend(ws, data) {
   return false;
 }
 
-function disconnect(ws) {
-  connections.delete(ws);
-  chatLogger.userDisconnected(ws.id, 'normal_disconnect');
-
-  // Remove from waiting if present
-  const waitingIndex = waiting.indexOf(ws);
-  if (waitingIndex >= 0) {
-    waiting.splice(waitingIndex, 1);
-    chatLogger.updateStats({ waitingUsers: waiting.length });
-  }
-
-  // Handle partner
-  if (ws.partner && ws.partner.readyState === ws.partner.OPEN) {
-    safeSend(ws.partner, { system: '[SYSTEM] Stranger disconnected.' });
-    chatLogger.pairDisconnected(ws.id, ws.partner.id, 'partner_disconnect');
-
-    ws.partner.partner = null;
-
-    // Only add to waiting if not already there
-    if (!waiting.includes(ws.partner)) {
-      waiting.push(ws.partner);
-      chatLogger.userWaiting(ws.partner.id);
-      safeSend(ws.partner, { system: '[SYSTEM] Waiting for a stranger…' });
-    }
-  }
-
-  // Update stats
+function updateConnectionStats() {
   chatLogger.updateStats({
     currentConnections: connections.size,
     waitingUsers: waiting.length,
     activePairs: Math.floor((connections.size - waiting.length) / 2)
   });
-
-  // Broadcast updated stats
   broadcastStats();
 }
 
-wss.on('connection', (ws) => {
+function expireSession(session) {
+  if (clients.get(session.clientId) !== session || session.ws) return;
+
+  clients.delete(session.clientId);
+  session.reconnectTimer = null;
+
+  if (session.partnerId) {
+    const partnerSession = clients.get(session.partnerId);
+    session.partnerId = null;
+
+    if (partnerSession?.partnerId === session.clientId) {
+      partnerSession.partnerId = null;
+      const partner = partnerSession.ws;
+
+      if (partner && partner.readyState === partner.OPEN) {
+        partner.partner = null;
+        safeSend(partner, { system: '[SYSTEM] Stranger disconnected.' });
+        chatLogger.pairDisconnected(session.clientId, partnerSession.clientId, 'reconnect_timeout');
+
+        if (!waiting.includes(partner)) {
+          waiting.push(partner);
+          partnerSession.waiting = true;
+          chatLogger.userWaiting(partner.id);
+          safeSend(partner, { system: '[SYSTEM] Waiting for a stranger…' });
+        }
+      }
+    }
+  }
+
+  updateConnectionStats();
+}
+
+function disconnect(ws) {
+  const session = ws.session;
+  connections.delete(ws);
+
+  // A replaced socket must not disconnect the newer socket for this client.
+  if (!session || session.ws !== ws) return;
+
+  session.ws = null;
+  chatLogger.userDisconnected(ws.id, 'connection_lost');
+
+  const waitingIndex = waiting.indexOf(ws);
+  if (waitingIndex >= 0) {
+    waiting.splice(waitingIndex, 1);
+    session.queuedPosition = waitingIndex;
+  }
+
+  if (session.partnerId) {
+    const partnerSession = clients.get(session.partnerId);
+    const partner = partnerSession?.ws;
+    if (partner && partner.readyState === partner.OPEN) {
+      safeSend(partner, { system: '[SYSTEM] Stranger connection lost. Reconnecting…' });
+    }
+  }
+
+  clearTimeout(session.reconnectTimer);
+  session.reconnectTimer = setTimeout(() => expireSession(session), RECONNECT_GRACE_MS);
+  updateConnectionStats();
+}
+
+function enqueueSession(session, position = waiting.length) {
+  const ws = session.ws;
+  if (!ws || ws.readyState !== ws.OPEN || waiting.includes(ws)) return;
+
+  waiting.splice(Math.min(position, waiting.length), 0, ws);
+  session.waiting = true;
+  session.queuedPosition = null;
+  chatLogger.userWaiting(ws.id);
+}
+
+wss.on('connection', (ws, request) => {
+  const clientId = new URL(request.url, 'http://localhost').searchParams.get('clientId');
+  if (!clientId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientId)) {
+    ws.close(1008, 'A valid clientId is required');
+    return;
+  }
+
   ws.id = uuid();
+  let session = clients.get(clientId);
+  const isReconnect = Boolean(session);
+
+  if (session) {
+    clearTimeout(session.reconnectTimer);
+
+    if (session.ws) {
+      const previousSocket = session.ws;
+      connections.delete(previousSocket);
+      chatLogger.userDisconnected(previousSocket.id, 'replaced_connection');
+
+      const previousWaitingIndex = waiting.indexOf(previousSocket);
+      if (previousWaitingIndex >= 0) {
+        waiting.splice(previousWaitingIndex, 1);
+        session.queuedPosition = previousWaitingIndex;
+      }
+
+      previousSocket.close(4001, 'Reconnected from this client');
+    }
+  } else {
+    session = {
+      clientId,
+      ws: null,
+      partnerId: null,
+      reconnectTimer: null,
+      waiting: false,
+      queuedPosition: null
+    };
+    clients.set(clientId, session);
+  }
+
+  session.ws = ws;
+  ws.session = session;
   connections.add(ws);
   ws.isAlive = true;
 
   chatLogger.userConnected(ws.id);
+
+  if (isReconnect && session.partnerId) {
+    const partnerSession = clients.get(session.partnerId);
+    const partner = partnerSession?.ws;
+
+    if (partner?.readyState === partner.OPEN) {
+      ws.partner = partner;
+      partner.partner = ws;
+      safeSend(ws, { system: '[SYSTEM] Reconnected to your stranger.' });
+      safeSend(partner, { system: '[SYSTEM] Stranger reconnected.' });
+    } else {
+      safeSend(ws, { system: '[SYSTEM] Stranger connection lost. Reconnecting…' });
+    }
+  } else if (isReconnect && session.waiting) {
+    enqueueSession(session, session.queuedPosition ?? waiting.length);
+    safeSend(ws, { system: '[SYSTEM] Waiting for a stranger…' });
+  }
 
   // Send initial stats to new connection
   safeSend(ws, {
@@ -131,48 +236,44 @@ wss.on('connection', (ws) => {
   // Clean up dead connections before pairing
   cleanupWaiting();
 
-  if (waiting.length > 0) {
-    // Find a valid waiting connection
-    let other = null;
-    let attempts = 0;
+  const restoringSession = isReconnect && (session.partnerId || session.waiting);
+  if (!restoringSession) {
+    if (waiting.length > 0) {
+      // Find a valid waiting connection
+      let other = null;
+      let attempts = 0;
 
-    while (waiting.length > 0 && attempts < waiting.length) {
-      const idx = Math.floor(Math.random() * waiting.length);
-      const candidate = waiting[idx];
+      while (waiting.length > 0 && attempts < waiting.length) {
+        const idx = Math.floor(Math.random() * waiting.length);
+        const candidate = waiting[idx];
 
-      if (candidate.readyState === candidate.OPEN && !candidate.partner) {
-        other = waiting.splice(idx, 1)[0];
-        break;
-      } else {
-        // Remove dead connection
-        waiting.splice(idx, 1);
+        if (candidate.readyState === candidate.OPEN && !candidate.partner) {
+          other = waiting.splice(idx, 1)[0];
+          break;
+        } else {
+          // Remove dead connection
+          waiting.splice(idx, 1);
+        }
+        attempts++;
       }
-      attempts++;
-    }
 
-    if (other && pair(ws, other)) {
-      safeSend(ws, { system: '[SYSTEM] Connected to a stranger.' });
-      safeSend(other, { system: '[SYSTEM] Connected to a stranger.' });
+      if (other && pair(ws, other)) {
+        safeSend(ws, { system: '[SYSTEM] Connected to a stranger.' });
+        safeSend(other, { system: '[SYSTEM] Connected to a stranger.' });
+      } else {
+        enqueueSession(session);
+        safeSend(ws, { system: '[SYSTEM] Waiting for a stranger…' });
+      }
     } else {
-      waiting.push(ws);
-      chatLogger.userWaiting(ws.id);
-      safeSend(ws, { system: '[SYSTEM] Waiting for a stranger…' });
+      if (!session.waiting) {
+        enqueueSession(session);
+        safeSend(ws, { system: '[SYSTEM] Waiting for a stranger…' });
+      }
     }
-  } else {
-    waiting.push(ws);
-    chatLogger.userWaiting(ws.id);
-    safeSend(ws, { system: '[SYSTEM] Waiting for a stranger…' });
   }
 
   // Update stats
-  chatLogger.updateStats({
-    currentConnections: connections.size,
-    waitingUsers: waiting.length,
-    activePairs: Math.floor((connections.size - waiting.length) / 2)
-  });
-
-  // Broadcast updated stats
-  broadcastStats();
+  updateConnectionStats();
 
   ws.on('message', (data) => {
     ws.isAlive = true;

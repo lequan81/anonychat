@@ -6,6 +6,7 @@ A simple anonymous chat that connects you with a random stranger. Nothing fancy.
 
 * Random 1-on-1 pairing
 * Typing indicator
+* Automatic reconnect with the same chat partner for up to 60 seconds after a network interruption
 * Clean dark UI with Tailwind
 
 ## Run it

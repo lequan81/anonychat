@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 const useAudio = () => {
   const audioRefs = useRef({
@@ -8,7 +8,7 @@ const useAudio = () => {
     receive: new Audio('/sounds/message.mp3')
   });
 
-  const playSound = (type) => {
+  const playSound = useCallback((type) => {
     try {
       const audio = audioRefs.current[type];
       if (audio) {
@@ -18,75 +18,90 @@ const useAudio = () => {
     } catch (error) {
       console.log('Audio error:', error);
     }
-  };
+  }, []);
 
   return { playSound };
 };
 
 const useWebSocket = (playSound) => {
   const [ws, setWs] = useState(null);
-  const [isConnected, setIsConnected] = useState(false);
   const [isUserConnected, setIsUserConnected] = useState(false);
   const [messages, setMessages] = useState([]);
-  const [typingStatus, setTypingStatus] = useState('');
   const [onlineCount, setOnlineCount] = useState(0);
+  const typingTimeoutRef = useRef(null);
 
   useEffect(() => {
+    const storageKey = 'anonychat-client-id';
+    let clientId = window.localStorage.getItem(storageKey);
+    if (!clientId) {
+      clientId = window.crypto.randomUUID();
+      window.localStorage.setItem(storageKey, clientId);
+    }
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
-    const websocket = new WebSocket(wsUrl);
+    const wsUrl = `${protocol}//${window.location.host}/ws?clientId=${encodeURIComponent(clientId)}`;
+    let websocket;
+    let reconnectTimeout;
+    let reconnectDelay = 500;
+    let disposed = false;
+    let hasLostConnection = false;
 
-    websocket.onopen = () => {
-      setWs(websocket);
-      setIsConnected(true);
-    };
+    const connect = () => {
+      if (disposed) return;
 
-    websocket.onmessage = (event) => {
-      let msg;
-      try {
-        msg = JSON.parse(event.data);
-      } catch {
-        msg = { system: event.data };
-      }
+      websocket = new WebSocket(wsUrl);
 
-      if (msg.type === 'stats' && msg.onlineCount !== undefined) {
-        setOnlineCount(msg.onlineCount);
-      }
+      websocket.onopen = () => {
+        reconnectDelay = 500;
+        setWs(websocket);
+        hasLostConnection = false;
+      };
 
-      if (msg.type === 'receipt') {
-        setMessages((prev) => prev.map((m) => (m.id === msg.messageId ? { ...m, delivered: true } : m)));
-        return;
-      }
-
-      if (msg.system?.includes('Connected to a stranger')) {
-        setIsConnected(true);
-        setIsUserConnected(true);
-        setMessages([]);
-        playSound('connect');
-      }
-
-      if (msg.system?.includes('disconnected')) {
-        setIsConnected(false);
-        setIsUserConnected(false);
-        playSound('disconnect');
-      }
-
-      if (msg.type === 'text') {
-        const soundType = msg.from === 'self' ? 'send' : 'receive';
-        playSound(soundType);
-
-        if (msg.from === 'stranger' && msg.id && websocket.readyState === WebSocket.OPEN) {
-          websocket.send(
-            JSON.stringify({
-              type: 'receipt',
-              messageId: msg.id
-            })
-          );
+      websocket.onmessage = (event) => {
+        let msg;
+        try {
+          msg = JSON.parse(event.data);
+        } catch {
+          msg = { system: event.data };
         }
 
-        setMessages((prev) => [
-          ...prev,
-          {
+        if (msg.type === 'stats' && msg.onlineCount !== undefined) {
+          setOnlineCount(msg.onlineCount);
+        }
+
+        if (msg.type === 'receipt') {
+          setMessages((prev) => prev.map((m) => (m.id === msg.messageId ? { ...m, delivered: true } : m)));
+          return;
+        }
+
+        if (msg.system?.includes('Connected to a stranger')) {
+          setIsUserConnected(true);
+          setMessages([]);
+          playSound('connect');
+        }
+
+        if (msg.system?.toLowerCase().includes('reconnected')) {
+          setIsUserConnected(true);
+        }
+
+        if (msg.system?.includes('Waiting for a stranger') || msg.system?.includes('No partner available')) {
+          setIsUserConnected(false);
+        }
+
+        if (msg.system?.toLowerCase().includes('connection lost')) {
+          setIsUserConnected(false);
+        }
+
+        if (msg.system?.includes('disconnected')) {
+          setIsUserConnected(false);
+          playSound('disconnect');
+        }
+
+        if (msg.type === 'text') {
+          const soundType = msg.from === 'self' ? 'send' : 'receive';
+          playSound(soundType);
+
+          const incomingMessage = {
             id: msg.id,
             type: 'text',
             data: msg.data,
@@ -94,42 +109,90 @@ const useWebSocket = (playSound) => {
             isMine: msg.from === 'self',
             delivered: msg.from === 'self' ? false : true,
             timestamp: Date.now()
+          };
+
+          if (msg.from === 'stranger' && msg.id && websocket.readyState === WebSocket.OPEN) {
+            websocket.send(
+              JSON.stringify({
+                type: 'receipt',
+                messageId: msg.id
+              })
+            );
           }
-        ]);
-      }
 
-      if (msg.type === 'typing') {
-        setTypingStatus('Người lạ đang nhập…');
-        window.setTimeout(() => setTypingStatus(''), 2000);
-      }
-
-      if (msg.system) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            system: msg.system,
-            timestamp: Date.now()
+          if (msg.from === 'stranger') {
+            window.clearTimeout(typingTimeoutRef.current);
           }
-        ]);
-      }
+
+          setMessages((prev) => {
+            if (msg.from === 'stranger') {
+              const typingIndex = prev.findLastIndex((item) => item.type === 'typing');
+              if (typingIndex >= 0) {
+                return prev.map((item, index) => index === typingIndex ? incomingMessage : item);
+              }
+            }
+            return [...prev, incomingMessage];
+          });
+        }
+
+        if (msg.type === 'typing') {
+          window.clearTimeout(typingTimeoutRef.current);
+          setMessages((prev) => (
+            prev.some((item) => item.type === 'typing')
+              ? prev
+              : [...prev, { id: 'typing-indicator', type: 'typing', timestamp: Date.now() }]
+          ));
+          typingTimeoutRef.current = window.setTimeout(() => {
+            setMessages((prev) => prev.filter((item) => item.type !== 'typing'));
+          }, 2000);
+        }
+
+        if (msg.system) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              system: msg.system,
+              timestamp: Date.now()
+            }
+          ]);
+        }
+      };
+
+      websocket.onclose = () => {
+        if (disposed) return;
+
+        setWs(null);
+        setIsUserConnected(false);
+        if (!hasLostConnection) {
+          hasLostConnection = true;
+          setMessages((prev) => [
+            ...prev,
+            { system: '[SYSTEM] Connection lost. Retrying…', timestamp: Date.now() }
+          ]);
+        }
+        reconnectTimeout = window.setTimeout(() => {
+          connect();
+        }, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 10000);
+      };
+
+      websocket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        websocket.close();
+      };
     };
 
-    websocket.onclose = () => {
-      setIsConnected(false);
-      setWs(null);
-    };
-
-    websocket.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      setIsConnected(false);
-    };
+    connect();
 
     return () => {
-      if (websocket.readyState !== WebSocket.CLOSING && websocket.readyState !== WebSocket.CLOSED) {
+      disposed = true;
+      window.clearTimeout(reconnectTimeout);
+      window.clearTimeout(typingTimeoutRef.current);
+      if (websocket && websocket.readyState !== WebSocket.CLOSING && websocket.readyState !== WebSocket.CLOSED) {
         websocket.close();
       }
     };
-  }, []);
+  }, [playSound]);
 
   const sendMessage = (data) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -137,65 +200,76 @@ const useWebSocket = (playSound) => {
     }
   };
 
-  return { isConnected, isUserConnected, messages, typingStatus, sendMessage, onlineCount };
+  return { isUserConnected, messages, sendMessage, onlineCount };
 };
 
 const ChatBubble = ({ message, isMine, delivered }) => (
   <div
-    className={`max-w-[82%] w-fit break-words rounded-[1.35rem] border px-3 py-2.5 text-sm leading-relaxed transition-colors duration-200 ${
-      isMine
-        ? delivered
-          ? 'ml-auto border-zinc-800 bg-zinc-900/70 text-zinc-100 text-right'
-          : 'ml-auto border-amber-500/20 bg-amber-500/[0.035] text-zinc-100 text-right'
-        : 'mr-auto border-zinc-800 bg-zinc-900/50 text-zinc-100 text-left'
-    }`}
+    className={`max-w-[82%] w-fit break-words rounded-[1.35rem] border px-3 py-2.5 text-sm leading-relaxed transition-colors duration-200 ${isMine
+      ? delivered
+        ? 'ml-auto border-emerald-500/20 bg-emerald-500/[0.035] text-zinc-100 text-right'
+        : 'ml-auto border-amber-500/25 bg-amber-500/[0.06] text-zinc-100 text-right'
+      : 'mr-auto border-zinc-800 bg-zinc-900/50 text-zinc-100 text-left'
+      }`}
   >
     <span className="block">{message}</span>
-    {isMine && (
-      <span
-        className={`mt-1 block text-[8px] font-medium uppercase tracking-[0.12em] ${
-          delivered ? 'text-zinc-500' : 'text-amber-300/70'
-        }`}
-      >
-        {delivered ? 'sent' : 'sending'}
-      </span>
-    )}
   </div>
 );
 
 const SystemMessage = ({ message }) => {
-  const statusStyle = message.includes('Connected to a stranger')
-    ? 'border-emerald-500/25 bg-emerald-500/[0.06] text-emerald-300'
-    : message.includes('disconnected')
-      ? 'border-rose-500/25 bg-rose-500/[0.06] text-rose-300'
-      : message.includes('Waiting') || message.includes('No partner')
-        ? 'border-amber-500/25 bg-amber-500/[0.06] text-amber-200'
-        : 'border-zinc-700/70 bg-zinc-800/40 text-zinc-400';
+  const normalizedMessage = message.toLowerCase();
+  const isConnected = normalizedMessage.includes('connected to a stranger')
+    || normalizedMessage.includes('reconnected')
+    || normalizedMessage.includes('connection restored')
+    || normalizedMessage.includes('connection established');
+  const isReconnecting = normalizedMessage.includes('connection lost');
+  const dotStyle = isConnected
+    ? 'bg-emerald-300'
+    : isReconnecting
+      ? 'bg-amber-300'
+      : 'bg-zinc-500';
+  const textStyle = isConnected
+    ? 'text-emerald-200/80'
+    : isReconnecting
+      ? 'text-amber-200/80'
+      : 'text-zinc-500';
+  const label = normalizedMessage.includes('connection restored')
+    ? 'Đã kết nối lại với máy chủ'
+    : normalizedMessage.includes('connection lost. retrying')
+      ? 'Mất kết nối · Đang thử lại'
+      : normalizedMessage.includes('connection lost')
+        ? 'Người lạ mất kết nối · Đang thử lại'
+        : normalizedMessage.includes('reconnected to your stranger')
+          ? 'Đã kết nối lại'
+          : normalizedMessage.includes('stranger reconnected')
+            ? 'Người lạ đã kết nối lại'
+            : normalizedMessage.includes('connected to a stranger')
+              ? 'Đã kết nối'
+              : normalizedMessage.includes('stranger disconnected')
+                ? 'Đã ngắt kết nối'
+                : normalizedMessage.includes('waiting for a stranger')
+                  ? 'Đang chờ người lạ'
+                  : message.replace(/^\[SYSTEM\]\s*/i, '');
 
   return (
-    <div
-      className={`mx-auto my-2 w-fit max-w-full rounded-lg border px-3 py-1.5 text-center text-[9px] font-medium uppercase tracking-[0.14em] ${statusStyle}`}
-    >
-      {message}
+    <div className="my-2 flex items-center gap-2.5 py-1" role="status">
+      <span className="h-px flex-1 bg-zinc-800/80" />
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotStyle}`} />
+      <span className={`text-center text-[9px] font-medium tracking-wide ${textStyle}`}>{label}</span>
+      <span className="h-px flex-1 bg-zinc-800/80" />
     </div>
   );
 };
 
-const TypingIndicator = ({ typingStatus }) => (
+const TypingBubble = () => (
   <div
-    className={`h-5 shrink-0 text-xs text-zinc-400 transition-all duration-300 ${typingStatus ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0'
-      }`}
+    className="mr-auto flex w-fit items-center gap-1.5 rounded-[1.35rem] border border-zinc-800 bg-zinc-900/50 px-4 py-3"
+    role="status"
+    aria-label="Người lạ đang nhập"
   >
-    {typingStatus && (
-      <span className="inline-flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-900/70 px-2.5 py-1">
-        <span className="inline-flex gap-1">
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-zinc-300" />
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-zinc-300 [animation-delay:150ms]" />
-          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-zinc-300 [animation-delay:300ms]" />
-        </span>
-        {typingStatus}
-      </span>
-    )}
+    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-zinc-400" />
+    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-zinc-400 [animation-delay:150ms]" />
+    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-zinc-400 [animation-delay:300ms]" />
   </div>
 );
 
@@ -265,6 +339,8 @@ const ChatLog = ({ messages, isUserConnected }) => {
             <div key={msg.id || `${msg.timestamp}-${idx}`}>
               {msg.system ? (
                 <SystemMessage message={msg.system} />
+              ) : msg.type === 'typing' ? (
+                <TypingBubble />
               ) : (
                 <ChatBubble message={msg.data} isMine={msg.isMine} delivered={msg.delivered} />
               )}
@@ -390,7 +466,7 @@ const ChatContainer = ({ children }) => (
 
 const AnonyChat = () => {
   const { playSound } = useAudio();
-  const { isUserConnected, messages, typingStatus, sendMessage, onlineCount } = useWebSocket(playSound);
+  const { isUserConnected, messages, sendMessage, onlineCount } = useWebSocket(playSound);
   const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
 
@@ -453,7 +529,6 @@ const AnonyChat = () => {
       <ChatContainer>
         <ChatHeader onlineCount={onlineCount} isUserConnected={isUserConnected} />
         <ChatLog messages={messages} isUserConnected={isUserConnected} />
-        <TypingIndicator typingStatus={typingStatus} />
         <MessageInput onSendMessage={handleSendMessage} onTyping={handleTyping} isConnected={isUserConnected} />
       </ChatContainer>
     </div>
