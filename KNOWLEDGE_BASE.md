@@ -91,27 +91,36 @@ The root project is a Node app with these main dependencies:
 
 At the root level, the package is configured as an ES module (`"type": "module"`).
 
-The README says:
+There are two practical ways to run the app:
 
-```bash
-npm install
-node server.js
-```
-
-However, the actual server entry file in the project is `index.js`, not `server.js`. The README is therefore stale and will not run correctly as written.
-
-The app is expected to be started in practice with:
+1. Server-only mode for the built static client:
 
 ```bash
 npm install
 node index.js
 ```
 
-Then users open the app in a browser at:
+2. Front-end development mode for the React/Vite client:
+
+```bash
+cd anonychat-fe
+npm install
+npm run dev -- --host 0.0.0.0 --port 4173
+```
+
+The app is expected to be available at:
 
 ```text
 http://localhost:3000
 ```
+
+for the production-built static server, or:
+
+```text
+http://localhost:4173
+```
+
+for the Vite dev build.
 
 ## What the project does well
 
