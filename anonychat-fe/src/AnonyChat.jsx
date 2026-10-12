@@ -70,6 +70,9 @@ const useWebSocket = (playSound) => {
   const typingTimeoutRef = useRef(null);
   const reconnectGraceRef = useRef(30);
   const nextMessageIndexRef = useRef(0);
+  const imageTransfersRef = useRef(new Map());
+  // Map<transferId, {totalChunks, totalBytes, messageId, messageIndex, chunks: Uint8Array[], received: number}>
+  const blobUrlsRef = useRef([]);
 
   const recordActivityEvent = useCallback((type) => {
     const count = ++activityEventCountRef.current;
@@ -105,6 +108,7 @@ const useWebSocket = (playSound) => {
       if (disposed) return;
 
       websocket = new WebSocket(wsUrl);
+      websocket.binaryType = 'arraybuffer';
 
       websocket.onopen = () => {
         reconnectDelay = 500;
@@ -126,6 +130,62 @@ const useWebSocket = (playSound) => {
       };
 
       websocket.onmessage = (event) => {
+        // Handle binary frames (image chunks from server relay)
+        if (event.data instanceof ArrayBuffer) {
+          const buffer = event.data;
+          const HEADER = 40;
+          if (buffer.byteLength < HEADER) return;
+
+          const bytes = new Uint8Array(buffer, 0, 36);
+          let transferId = '';
+          for (let i = 0; i < 36; i++) transferId += String.fromCharCode(bytes[i]);
+
+          const view = new DataView(buffer);
+          const chunkIndex = view.getUint32(36, false);
+
+          const transfer = imageTransfersRef.current.get(transferId);
+          if (!transfer || chunkIndex >= transfer.totalChunks || transfer.chunks[chunkIndex]) return;
+
+          transfer.chunks[chunkIndex] = new Uint8Array(buffer, HEADER);
+          transfer.received++;
+
+          const progress = Math.round((transfer.received / transfer.totalChunks) * 100);
+          setMessages((prev) => prev.map((m) =>
+            m.imageTransferId === transferId ? { ...m, imageProgress: progress } : m
+          ));
+
+          if (transfer.received >= transfer.totalChunks) {
+            // Assemble all chunks into a single Uint8Array
+            let totalSize = 0;
+            for (const chunk of transfer.chunks) totalSize += chunk.length;
+            const assembled = new Uint8Array(totalSize);
+            let offset = 0;
+            for (const chunk of transfer.chunks) { assembled.set(chunk, offset); offset += chunk.length; }
+
+            imageTransfersRef.current.delete(transferId);
+
+            const blob = new Blob([assembled], { type: 'image/jpeg' });
+            const blobUrl = URL.createObjectURL(blob);
+            blobUrlsRef.current.push(blobUrl);
+
+            recordActivityEvent('image');
+            playSound('receive');
+
+            setMessages((prev) => prev.map((m) =>
+              m.imageTransferId === transferId
+                ? { ...m, data: blobUrl, imageProgress: undefined, imageTransferId: undefined, delivered: true }
+                : m
+            ));
+
+            // Send delivery receipt
+            if (transfer.messageId && websocket.readyState === WebSocket.OPEN) {
+              websocket.send(JSON.stringify({ type: 'receipt', messageId: transfer.messageId }));
+              recordActivityEvent('receipt');
+            }
+          }
+          return;
+        }
+
         let msg;
         try {
           msg = JSON.parse(event.data);
@@ -135,6 +195,49 @@ const useWebSocket = (playSound) => {
 
         if (msg.type === 'config' && Number.isInteger(msg.reconnectGraceSeconds) && msg.reconnectGraceSeconds > 0) {
           reconnectGraceRef.current = msg.reconnectGraceSeconds;
+        }
+
+        if (msg.type === 'image_start') {
+          const { id, messageId, messageIndex, totalChunks, totalBytes } = msg;
+          if (!id || !Number.isSafeInteger(totalChunks) || totalChunks < 1) return;
+
+          imageTransfersRef.current.set(id, {
+            totalChunks,
+            totalBytes,
+            messageId: typeof messageId === 'string' ? messageId : null,
+            chunks: new Array(totalChunks).fill(null),
+            received: 0
+          });
+
+          const msgIndex = Number.isSafeInteger(messageIndex) ? messageIndex : nextMessageIndexRef.current++;
+          setMessages((prev) => [
+            ...prev.filter((item) => item.type !== 'typing'),
+            {
+              id: typeof messageId === 'string' ? messageId : `img_transfer_${id}`,
+              index: msgIndex,
+              originIndex: Number.isSafeInteger(messageIndex) ? messageIndex : null,
+              author: 'peer',
+              type: 'image',
+              data: null,
+              from: 'stranger',
+              isMine: false,
+              delivered: false,
+              reactions: { self: null, peer: null },
+              timestamp: Date.now(),
+              imageProgress: 0,
+              imageTransferId: id
+            }
+          ]);
+          return;
+        }
+
+        if (msg.type === 'image_cancel') {
+          const { id } = msg;
+          imageTransfersRef.current.delete(id);
+          setMessages((prev) => prev.map((m) =>
+            m.imageTransferId === id ? { ...m, imageFailed: true, imageProgress: undefined, imageTransferId: undefined } : m
+          ));
+          return;
         }
 
         if (msg.type === 'announcement' && typeof msg.message === 'string') {
@@ -1437,7 +1540,25 @@ const AdminConsole = () => {
   const [isFeedbackLoading, setIsFeedbackLoading] = useState(false);
   const [feedbackError, setFeedbackError] = useState('');
   const [status, setStatus] = useState(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [adminStats, setAdminStats] = useState(null);
+  const [isAdminStatsLoading, setIsAdminStatsLoading] = useState(false);
+
+  const loadAdminStats = async (adminToken) => {
+    setIsAdminStatsLoading(true);
+    try {
+      const response = await fetch('/api/admin/stats', {
+        headers: { Authorization: `Bearer ${adminToken}` }
+      });
+      const result = await response.json();
+      if (response.status === 401) setToken('');
+      if (!response.ok) return;
+      setAdminStats(result);
+    } catch {
+      // ignore
+    } finally {
+      setIsAdminStatsLoading(false);
+    }
+  };
 
   const loadFeedback = async (adminToken) => {
     setIsFeedbackLoading(true);
@@ -1474,7 +1595,7 @@ const AdminConsole = () => {
       setToken(result.token);
       setPassword('');
       setStatus({ type: 'success', message: 'Đã đăng nhập. Phiên admin hết hạn sau 8 giờ.' });
-      await loadFeedback(result.token);
+      await Promise.all([loadFeedback(result.token), loadAdminStats(result.token)]);
     } catch (error) {
       setStatus({ type: 'error', message: error.message || 'Không thể kết nối tới server.' });
     } finally {
@@ -1599,6 +1720,43 @@ const AdminConsole = () => {
               </button>
             </div>
           </form>
+        )}
+
+        {token && (
+          <section className="mt-8 border-t border-zinc-800 pt-6" aria-labelledby="admin-stats-title">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 id="admin-stats-title" className="text-sm font-medium text-zinc-100">Thống kê hệ thống (Nội bộ)</h2>
+                <p className="mt-1 text-[10px] text-zinc-500">Chỉ admin đăng nhập mới xem được thông số này</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => loadAdminStats(token)}
+                disabled={isAdminStatsLoading}
+                className="rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-300 transition-colors hover:bg-zinc-800 disabled:opacity-50"
+              >
+                {isAdminStatsLoading ? 'Đang tải…' : 'Làm mới'}
+              </button>
+            </div>
+            {adminStats && (
+              <div className="mt-4 grid grid-cols-3 gap-2.5">
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 p-3">
+                  <p className="text-[10px] uppercase tracking-wider text-zinc-400">Trực tuyến</p>
+                  <p className="mt-1 text-xl font-semibold text-emerald-400">{adminStats.onlineCount ?? 0}</p>
+                </div>
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 p-3">
+                  <p className="text-[10px] uppercase tracking-wider text-zinc-400">Phiên chat</p>
+                  <p className="mt-1 text-xl font-semibold text-sky-400">{adminStats.activePairs ?? 0}</p>
+                  <p className="mt-0.5 text-[9px] text-zinc-500">{(adminStats.activePairs ?? 0) * 2} người đang chat</p>
+                </div>
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 p-3">
+                  <p className="text-[10px] uppercase tracking-wider text-zinc-400">Hàng đợi</p>
+                  <p className="mt-1 text-xl font-semibold text-amber-400">{adminStats.waitingUsers ?? 0}</p>
+                  <p className="mt-0.5 text-[9px] text-zinc-500">đang tìm người lạ</p>
+                </div>
+              </div>
+            )}
+          </section>
         )}
 
         {token && (

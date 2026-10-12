@@ -139,6 +139,19 @@ app.get('/api/admin/feedback', async (request, response) => {
   }
 });
 
+app.get('/api/admin/stats', (request, response) => {
+  if (!getAdminSession(request)) {
+    response.status(401).json({ error: 'Phiên admin đã hết hạn. Vui lòng đăng nhập lại.' });
+    return;
+  }
+
+  response.json({
+    onlineCount: connections.size,
+    waitingUsers: waiting.length,
+    activePairs: Math.floor((connections.size - waiting.length) / 2)
+  });
+});
+
 app.delete('/api/admin/session', (request, response) => {
   const token = getAdminSession(request);
   if (!token) {
@@ -178,9 +191,7 @@ function decodeImageData(data) {
 function broadcastStats() {
   const stats = {
     type: 'stats',
-    onlineCount: connections.size,
-    waitingUsers: waiting.length,
-    activePairs: Math.floor((connections.size - waiting.length) / 2)
+    onlineCount: connections.size
   };
 
   connections.forEach(ws => {
@@ -356,6 +367,17 @@ function disconnect(ws) {
   // A replaced socket must not disconnect the newer socket for this client.
   if (!session || session.ws !== ws) return;
 
+  // Cancel any in-flight image transfers initiated by this socket
+  if (ws.imageTransfers?.size > 0) {
+    const currentPartner = ws.partner;
+    for (const [transferId] of ws.imageTransfers) {
+      if (currentPartner?.readyState === currentPartner?.OPEN) {
+        safeSend(currentPartner, { type: 'image_cancel', id: transferId, reason: 'disconnected' });
+      }
+    }
+    ws.imageTransfers.clear();
+  }
+
   session.ws = null;
   chatLogger.userDisconnected(ws.id, 'connection_lost');
 
@@ -438,6 +460,49 @@ function endConversation(ws) {
   updateConnectionStats();
 }
 
+const IMAGE_CHUNK_HEADER = 40; // 36 bytes UUID + 4 bytes chunkIndex uint32 BE
+const MAX_IMAGE_CHUNKS = Math.ceil(MAX_IMAGE_BYTES / (64 * 1024)) + 1; // ~80 for 5MB
+
+function handleBinaryChunk(ws, data) {
+  if (!Buffer.isBuffer(data) || data.length < IMAGE_CHUNK_HEADER) return;
+
+  const transferId = data.subarray(0, 36).toString('ascii');
+  const chunkIndex = data.readUInt32BE(36);
+
+  const transfer = ws.imageTransfers?.get(transferId);
+  if (!transfer) return;
+  if (chunkIndex >= transfer.totalChunks) return;
+
+  const partner = ws.partner;
+  if (!partner || partner.readyState !== partner.OPEN) {
+    ws.imageTransfers.delete(transferId);
+    safeSend(ws, { type: 'image_cancel', id: transferId, reason: 'no_partner' });
+    return;
+  }
+
+  try {
+    partner.send(data, { binary: true });
+  } catch (err) {
+    chatLogger.connectionError(ws.id, err);
+    return;
+  }
+
+  transfer.chunksRelayed++;
+  if (transfer.chunksRelayed >= transfer.totalChunks) {
+    chatLogger.messageSent(ws.id, partner.id, transfer.totalBytes);
+    if (MESSAGE_LOGGING_ENABLED) {
+      appendMessageLog({
+        timestamp: new Date().toISOString(),
+        fromUuid: ws.session.clientId,
+        toUuid: partner.session.clientId,
+        type: 'image',
+        message: `[chunked:${transfer.totalChunks}:${transfer.totalBytes}b]`
+      }).catch((err) => chatLogger.connectionError(ws.id, err));
+    }
+    ws.imageTransfers.delete(transferId);
+  }
+}
+
 wss.on('connection', (ws, request) => {
   const clientId = new URL(request.url, 'http://localhost').searchParams.get('clientId');
   if (!clientId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientId)) {
@@ -509,9 +574,7 @@ wss.on('connection', (ws, request) => {
   // Send initial stats to new connection
   safeSend(ws, {
     type: 'stats',
-    onlineCount: connections.size,
-    waitingUsers: waiting.length,
-    activePairs: Math.floor((connections.size - waiting.length) / 2)
+    onlineCount: connections.size
   });
 
   // Clean up dead connections before pairing
@@ -527,9 +590,14 @@ wss.on('connection', (ws, request) => {
   // Update stats
   updateConnectionStats();
 
-  ws.on('message', async (data) => {
+  ws.on('message', async (data, isBinary) => {
     ws.isAlive = true;
     ws.missedHeartbeats = 0;
+
+    if (isBinary) {
+      handleBinaryChunk(ws, data);
+      return;
+    }
 
     let msg;
     try {
@@ -547,6 +615,52 @@ wss.on('connection', (ws, request) => {
     // Application-level keepalive: client sends {type:"ping"} to keep proxy connections alive.
     if (msg.type === 'ping') {
       safeSend(ws, { type: 'pong' });
+      return;
+    }
+
+    if (msg.type === 'image_start') {
+      const { id, messageId, messageIndex, totalChunks, totalBytes } = msg;
+
+      if (
+        typeof id !== 'string'
+        || !/^[\w-]{1,64}$/.test(id)
+        || !Number.isSafeInteger(totalChunks)
+        || totalChunks < 1
+        || totalChunks > MAX_IMAGE_CHUNKS
+        || !Number.isSafeInteger(totalBytes)
+        || totalBytes <= 0
+        || totalBytes > MAX_IMAGE_BYTES
+      ) {
+        safeSend(ws, { type: 'image_cancel', id: typeof id === 'string' ? id : '', reason: 'invalid' });
+        return;
+      }
+
+      if (!ws.partner || ws.partner.readyState !== ws.partner.OPEN) {
+        safeSend(ws, { system: '[SYSTEM] No partner available.' });
+        return;
+      }
+
+      ws.imageTransfers = ws.imageTransfers ?? new Map();
+      // Limit concurrent transfers per socket
+      if (ws.imageTransfers.size >= 3) {
+        safeSend(ws, { type: 'image_cancel', id, reason: 'too_many' });
+        return;
+      }
+
+      ws.imageTransfers.set(id, {
+        totalChunks,
+        totalBytes,
+        chunksRelayed: 0
+      });
+
+      safeSend(ws.partner, {
+        type: 'image_start',
+        id,
+        messageId: typeof messageId === 'string' && messageId.length <= 100 ? messageId : undefined,
+        messageIndex: Number.isSafeInteger(messageIndex) ? messageIndex : undefined,
+        totalChunks,
+        totalBytes
+      });
       return;
     }
 
