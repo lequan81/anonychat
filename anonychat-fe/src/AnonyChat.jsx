@@ -1,6 +1,38 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import confetti from 'canvas-confetti';
 
 const REACTION_EMOJIS = ['❤️', '😂', '😮', '😢', '👍'];
+const ACTIVITY_MILESTONES = [10, 25, 50, 100, 250, 500, 1000];
+const EVENT_ICONS = {
+  text: '💬',
+  image: '🖼️',
+  reaction: '💟',
+  typing: '⌨️',
+  receipt: '📬'
+};
+
+const getCelebrationMessage = ({ kind, count, intensity }) => {
+  const messageIntros = ['Mới khởi động', 'Vào guồng rồi', 'Nhịp chat tăng tốc', 'Bùng nổ tin nhắn'];
+  const eventIntros = ['Mới khởi động', 'Tăng nhịp rồi', 'Server nóng lên', 'Bùng nổ sự kiện'];
+  const intro = (kind === 'messages' ? messageIntros : eventIntros)[intensity - 1];
+
+  return kind === 'messages'
+    ? `${intro} — hai bạn đã gửi ${count} tin nhắn cho nhau!`
+    : `${intro} — hai bạn đã spam lên server ${count} sự kiện!`;
+};
+
+const EasterEggCelebration = ({ celebration }) => (
+  <div className="pointer-events-none fixed inset-0 z-50 overflow-hidden">
+    <div className="easter-egg-toast-wrap absolute left-1/2 top-[6%]">
+      <div className={`easter-egg-toast easter-egg-toast--${celebration.intensity} flex max-w-[calc(100vw-2rem)] items-center justify-center gap-2 rounded-xl border border-emerald-300/25 bg-zinc-950/95 px-4 py-2 text-center text-xs text-emerald-100`}>
+        <span className={`easter-egg-emoji easter-egg-emoji--${celebration.intensity}`} aria-hidden="true">
+          {celebration.icon}
+        </span>
+        <span className="break-words">{getCelebrationMessage(celebration)}</span>
+      </div>
+    </div>
+  </div>
+);
 
 const useAudio = () => {
   const audioRefs = useRef({
@@ -31,9 +63,20 @@ const useWebSocket = (playSound) => {
   const [peerIdPrefix, setPeerIdPrefix] = useState('');
   const [messages, setMessages] = useState([]);
   const [onlineCount, setOnlineCount] = useState(0);
+  const [activityEventCount, setActivityEventCount] = useState(0);
+  const activityEventCountRef = useRef(0);
+  const eventMilestoneTypesRef = useRef(new Map());
   const typingTimeoutRef = useRef(null);
   const reconnectGraceRef = useRef(30);
   const nextMessageIndexRef = useRef(0);
+
+  const recordActivityEvent = useCallback((type) => {
+    const count = ++activityEventCountRef.current;
+    if (ACTIVITY_MILESTONES.includes(count) || (count > 1000 && count % 1000 === 0)) {
+      eventMilestoneTypesRef.current.set(count, type);
+    }
+    setActivityEventCount(count);
+  }, []);
 
   useEffect(() => {
     const storageKey = 'anonychat-client-id';
@@ -89,6 +132,7 @@ const useWebSocket = (playSound) => {
         }
 
         if (msg.type === 'receipt') {
+          recordActivityEvent('receipt');
           setMessages((prev) => prev.map((m) => (m.id === msg.messageId ? { ...m, delivered: true } : m)));
           return;
         }
@@ -101,6 +145,7 @@ const useWebSocket = (playSound) => {
           ) {
             return;
           }
+          recordActivityEvent('reaction');
           const targetAuthor = msg.author === 'self' ? 'peer' : 'self';
           setMessages((prev) => prev.map((message) => (
             message.originIndex === msg.messageIndex && message.author === targetAuthor
@@ -122,6 +167,9 @@ const useWebSocket = (playSound) => {
           if (!isReconnecting) {
             setMessages([]);
             nextMessageIndexRef.current = 0;
+            setActivityEventCount(0);
+            activityEventCountRef.current = 0;
+            eventMilestoneTypesRef.current.clear();
           }
           isReconnecting = false;
           playSound('connect');
@@ -157,6 +205,9 @@ const useWebSocket = (playSound) => {
         }
 
         if (msg.type === 'text' || msg.type === 'image') {
+          if (msg.from === 'stranger') {
+            recordActivityEvent(msg.type);
+          }
           const soundType = msg.from === 'self' ? 'send' : 'receive';
           playSound(soundType);
 
@@ -183,6 +234,7 @@ const useWebSocket = (playSound) => {
                 messageId: msg.id
               })
             );
+            recordActivityEvent('receipt');
           }
 
           window.clearTimeout(typingTimeoutRef.current);
@@ -194,6 +246,7 @@ const useWebSocket = (playSound) => {
         }
 
         if (msg.type === 'typing') {
+          recordActivityEvent('typing');
           window.clearTimeout(typingTimeoutRef.current);
           setMessages((prev) => (
             prev.some((item) => item.type === 'typing')
@@ -280,15 +333,19 @@ const useWebSocket = (playSound) => {
         websocket.close();
       }
     };
-  }, [playSound]);
+  }, [playSound, recordActivityEvent]);
 
   const sendMessage = (data) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       if (data.type === 'text' || data.type === 'image') {
         const messageIndex = nextMessageIndexRef.current++;
         ws.send(JSON.stringify({ ...data, messageIndex }));
+        recordActivityEvent(data.type);
       } else {
         ws.send(JSON.stringify(data));
+        if (data.type === 'typing') {
+          recordActivityEvent('typing');
+        }
       }
     }
   };
@@ -301,6 +358,7 @@ const useWebSocket = (playSound) => {
         author: targetMessage.author,
         emoji
       }));
+      recordActivityEvent('reaction');
       setMessages((prev) => prev.map((message) => (
         message.index === targetMessage.index
           ? {
@@ -318,7 +376,16 @@ const useWebSocket = (playSound) => {
     return false;
   };
 
-  return { isUserConnected, peerIdPrefix, messages, sendMessage, sendReaction, onlineCount };
+  return {
+    isUserConnected,
+    peerIdPrefix,
+    messages,
+    sendMessage,
+    sendReaction,
+    onlineCount,
+    activityEventCount,
+    eventMilestoneTypesRef
+  };
 };
 
 const ChatMessage = ({
@@ -844,9 +911,135 @@ const ChatContainer = ({ children }) => (
 
 const AnonyChat = () => {
   const { playSound } = useAudio();
-  const { isUserConnected, peerIdPrefix, messages, sendMessage, sendReaction, onlineCount } = useWebSocket(playSound);
+  const {
+    isUserConnected,
+    peerIdPrefix,
+    messages,
+    sendMessage,
+    sendReaction,
+    onlineCount,
+    activityEventCount,
+    eventMilestoneTypesRef
+  } = useWebSocket(playSound);
   const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
+  const [easterEggQueue, setEasterEggQueue] = useState([]);
+  const lastCelebratedMilestonesRef = useRef({ messages: 0, events: 0 });
+  const celebrationRevisionRef = useRef(0);
+
+  useEffect(() => {
+    const messageCount = messages.filter((message) => (
+      message.type === 'text' || message.type === 'image'
+    )).length;
+    if (messageCount === 0) {
+      lastCelebratedMilestonesRef.current.messages = 0;
+    }
+    if (activityEventCount === 0) {
+      lastCelebratedMilestonesRef.current.events = 0;
+    }
+    if (messageCount === 0 && activityEventCount === 0) {
+      setEasterEggQueue((queue) => (queue.length > 0 ? [] : queue));
+    }
+
+    const getNewMilestones = (previousCount, currentCount) => {
+      const milestones = ACTIVITY_MILESTONES.filter((value) => (
+        value > previousCount && value <= currentCount
+      ));
+      if (currentCount > 1000) {
+        for (let value = Math.max(2000, Math.ceil((previousCount + 1) / 1000) * 1000); value <= currentCount; value += 1000) {
+          milestones.push(value);
+        }
+      }
+      return milestones;
+    };
+
+    const newMessageMilestones = getNewMilestones(
+      lastCelebratedMilestonesRef.current.messages,
+      messageCount
+    );
+    const newEventMilestones = getNewMilestones(
+      lastCelebratedMilestonesRef.current.events,
+      activityEventCount
+    );
+    lastCelebratedMilestonesRef.current = {
+      messages: Math.max(lastCelebratedMilestonesRef.current.messages, messageCount),
+      events: Math.max(lastCelebratedMilestonesRef.current.events, activityEventCount)
+    };
+
+    if (newMessageMilestones.length > 0 || newEventMilestones.length > 0) {
+      const chatMessages = messages.filter((message) => (
+        message.type === 'text' || message.type === 'image'
+      ));
+      const celebrationsWithIcons = [
+        ...newMessageMilestones.map((count) => ({
+          kind: 'messages',
+          count,
+          icon: EVENT_ICONS[chatMessages[count - 1]?.type] ?? '💬'
+        })),
+        ...newEventMilestones.map((count) => ({
+          kind: 'events',
+          count,
+          icon: EVENT_ICONS[eventMilestoneTypesRef.current.get(count)] ?? '✨'
+        }))
+      ];
+      setEasterEggQueue((queue) => [
+        ...queue,
+        ...celebrationsWithIcons.map((celebration) => ({
+          ...celebration,
+          intensity: celebration.count <= 25 ? 1 : celebration.count <= 100 ? 2 : celebration.count <= 500 ? 3 : 4,
+          revision: ++celebrationRevisionRef.current
+        }))
+      ])
+    }
+  }, [messages, activityEventCount, eventMilestoneTypesRef]);
+
+  const activeCelebration = easterEggQueue[0];
+  const activeCelebrationRevision = activeCelebration?.revision;
+  useEffect(() => {
+    if (activeCelebrationRevision === undefined) return undefined;
+
+    const timeout = window.setTimeout(() => setEasterEggQueue((queue) => queue.slice(1)), 7800);
+    return () => window.clearTimeout(timeout);
+  }, [activeCelebrationRevision]);
+
+  const activeCelebrationIntensity = activeCelebration?.intensity;
+  const activeCelebrationIcon = activeCelebration?.icon;
+  useEffect(() => {
+    if (
+      activeCelebrationIntensity === undefined
+      || !activeCelebrationIcon
+      || window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) return;
+
+    const intensity = activeCelebrationIntensity;
+    const iconShape = confetti.shapeFromText({
+      text: activeCelebrationIcon,
+      scalar: 1.4 + intensity * 0.12
+    });
+    const burst = (particleRatio, options) => confetti({
+      angle: options.angle,
+      spread: options.spread,
+      startVelocity: 34 + intensity * 6,
+      decay: 0.9,
+      gravity: 0.85,
+      ticks: 180 + intensity * 50,
+      particleCount: Math.round((18 + intensity * 18) * particleRatio),
+      origin: { x: options.originX, y: 0.1 },
+      colors: ['#a7f3d0', '#bfdbfe', '#fde68a', '#fbcfe8', '#ffffff'],
+      scalar: 0.9 + intensity * 0.12,
+      shapes: [iconShape]
+    });
+
+    burst(0.5, { angle: 60, spread: 55, originX: 0.12 });
+    burst(0.5, { angle: 120, spread: 55, originX: 0.88 });
+    if (intensity >= 3) {
+      const secondBurst = window.setTimeout(() => {
+        burst(0.35, { angle: 90, spread: 100, originX: 0.5 });
+      }, 240);
+      return () => window.clearTimeout(secondBurst);
+    }
+    return undefined;
+  }, [activeCelebrationIcon, activeCelebrationIntensity, activeCelebrationRevision]);
 
   useEffect(() => {
     const updateHeight = () => {
@@ -907,6 +1100,13 @@ const AnonyChat = () => {
       }}
     >
       <div className="pointer-events-none absolute inset-0 opacity-[0.06] [background-image:linear-gradient(rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px)] [background-size:18px_18px]" />
+
+      {activeCelebration && (
+        <EasterEggCelebration
+          key={activeCelebration.revision}
+          celebration={activeCelebration}
+        />
+      )}
 
       <ChatContainer>
         <ChatHeader
