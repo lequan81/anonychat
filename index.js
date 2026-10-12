@@ -17,6 +17,9 @@ const connections = new Set();
 const clients = new Map();
 const blockedPairs = new Map();
 let isShuttingDown = false;
+app.get('/healthz', (request, response) => {
+  response.status(isShuttingDown ? 503 : 200).type('text/plain').send(isShuttingDown ? 'shutting down' : 'ok');
+});
 const reconnectGraceSeconds = Number(process.env.RECONNECT_GRACE_SECONDS ?? 30);
 const pairRematchCooldownSeconds = Number(process.env.PAIR_REMATCH_COOLDOWN_SECONDS ?? 15);
 const messageLoggingSetting = (process.env.MESSAGE_LOGGING_ENABLED ?? 'true').toLowerCase();

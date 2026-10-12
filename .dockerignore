@@ -1,0 +1,15 @@
+.git
+.agents
+.vscode
+**/node_modules
+**/.env
+**/.env.*
+!.env.example
+/logs
+/public
+**/dist
+**/coverage
+**/*.log
+*.md
+LICENSE
+skills-lock.json
