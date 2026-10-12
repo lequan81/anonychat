@@ -2,9 +2,9 @@
 
 ## What this project is
 
-AnonyChat is a lightweight anonymous chat application that pairs two random users together in a 1:1 conversation. It is intentionally simple: one Node.js server, one WebSocket layer for live chat, and a small front-end UI that lets a user connect, wait in a queue, and exchange text messages with a stranger.
+AnonyChat is a lightweight anonymous chat application that pairs two random users together in a 1:1 conversation. It is intentionally simple: one Node.js server, one WebSocket layer for live chat, and a small front-end UI that lets a user connect, wait in a queue, and exchange text messages or images with a stranger.
 
-The project is built around a very minimal real-time architecture rather than a full social platform. It aims to provide the experience of instant anonymous chat without implementing accounts, persistence, moderation, or multi-room features.
+The project is built around a minimal real-time architecture rather than a full social platform. It has no user accounts or moderation; chat history stays in the client during the conversation and is preserved across reconnects, while message content is separately written to server-side JSONL logs by default.
 
 ## High-level architecture
 
@@ -18,10 +18,10 @@ The project has two main parts:
 1. The server starts an Express app and a WebSocket server.
 2. Every client connection gets a UUID and is added to a global `connections` set.
 3. New clients are placed into a `waiting` queue until another user is available.
-4. When two users are available, the server randomly picks one waiting user and pairs the two connections.
-5. Once paired, the server forwards text messages and typing notifications between the two sockets.
-6. A heartbeat system sends ping/pong checks to detect dead or stale connections and removes them safely.
-7. Logs are written through `logger.js` to files in the `logs/` folder and also to the console.
+4. The server matches waiting users while skipping UUID pairs temporarily blocked by an end-conversation cooldown.
+5. Once paired, the server forwards validated text or JPEG image messages, delivery receipts, and typing notifications between the two sockets.
+6. A heartbeat system sends ping/pong checks to detect dead or stale connections. On an unexpected disconnect, the partner session can be resumed within the configured reconnect grace period.
+7. Application/metrics logs are written through `logger.js`; message content is written separately through `messageLog.js` to dated, size-rotated JSONL files when message logging is enabled.
 
 ## How it achieves the core behavior
 
@@ -30,10 +30,13 @@ The project has two main parts:
 The server’s core logic is in `index.js`.
 
 - `waiting` stores unpaired users.
-- `connections` stores all live sockets.
+- `connections` stores live sockets; `clients` tracks client UUID sessions and prevents multiple active tabs from taking over the same identity.
+- `blockedPairs` tracks UUID pairs temporarily excluded after a user ends a conversation.
 - `cleanupWaiting()` removes stale sockets from the queue.
-- `pair(a, b)` marks each socket as paired and links them using `a.partner = b` and `b.partner = a`.
-- When a new client arrives, the server tries to match them against a random existing waiting socket.
+- `matchWaiting()` searches for an eligible pair rather than allowing a temporarily blocked pair to prevent other waiting users from matching.
+- `pair(a, b)` marks each socket as paired and links their sessions.
+- `PAIR_REMATCH_COOLDOWN_SECONDS` defaults to 15 seconds. Ending a conversation returns both users to matching immediately, but excludes that UUID pair until the cooldown expires. A network reconnect does not trigger this cooldown.
+- Only a four-character peer UUID prefix is sent to the other client for display; the full UUID remains client/server session data used for reconnect.
 
 This creates a simple “join queue, then get paired with a random stranger” flow.
 
@@ -52,7 +55,9 @@ The client listens for messages such as:
 - `typing` notifications
 - `receipt` acknowledgements
 
-When the server receives a `text` message, it broadcasts the same payload to the partner socket and also echoes the message back to the sender with `from: 'self'`.
+The client can reconnect to the same chat session after a transient network interruption, with an exponential retry delay and a server-configured grace period (`RECONNECT_GRACE_SECONDS`, default 30). The client keeps the conversation history during reconnect. A second active connection using the same client UUID is rejected with close code 4001; the client does not retry that duplicate-tab rejection.
+
+Text and JPEG image messages are echoed to the sender and forwarded to the partner. Images are limited to 5 MiB by the server and are resized on the client before sending. The “Thoát” action ends the conversation for both participants and places them back in matching.
 
 ### 3. Typing and delivery signals
 
@@ -68,17 +73,19 @@ The client also uses message receipts to mark outbound messages as delivered aft
 - `logs/error.log`
 - `logs/metrics.log`
 
-It tracks connection counts, waiting users, active pairs, message counts, errors, heartbeat checks, and memory stats. These are logged periodically and on key lifecycle events.
+It tracks connection counts, waiting users, active pairs, message counts, errors, heartbeat checks, and memory stats. These are logged periodically and on key lifecycle events. `messageLog.js` separately writes message records as JSONL, organized by UTC date under `logs/messages/YYYY/MM/DD` and rotated at 20 MiB per file. Content logging is enabled by default and can be disabled with `MESSAGE_LOGGING_ENABLED=false`; image records contain JPEG data URLs. These files contain plaintext message content and identifiers.
 
 ## Important files and responsibilities
 
 - `index.js` — primary server logic, queue management, pairing, WebSocket flow, heartbeat, graceful shutdown
 - `logger.js` — Winston-based logging and stats tracking
+- `messageLog.js` — dated, size-rotated JSONL message content logging
 - `public/index.html` — static page shell that loads the browser bundle
 - `anonychat-fe/src/AnonyChat.jsx` — front-end UI and WebSocket client behavior
 - `anonychat-fe/src/main.jsx` — app bootstrap
 - `anonychat-fe/src/index.css` — Tailwind-based styling layer for the React app
 - `README.md` — project overview and running instructions
+- `.env.example` — example server configuration, including reconnect and rematch cooldown settings
 
 ## How the project is deployed or run
 
@@ -134,27 +141,19 @@ for the Vite dev build.
 
 This project is intentionally minimal and not production-grade. Key limitations include:
 
-- No persistent storage: conversations are not saved, logged, or searchable.
-- No user accounts or identity management.
-- No moderation, blocklist, or abuse control.
-- No rate limiting or spam prevention for message volume.
-- No message length limits, content filtering, or sanitization.
+- No user accounts or queryable conversation-history feature. Message content is nevertheless persisted in server-side JSONL logs by default; those logs are not a chat-history database.
+- No user identity management beyond the client UUID used for an active chat session.
+- No content moderation, abuse prevention, or rate limiting. WebSocket payloads have a 7 MiB transport limit and JPEG images have a 5 MiB application limit, but text has no separate application-level length limit.
 - No multi-room or multi-session management.
 - No real database or auth layer.
 - No Redis, clustering, or horizontal scaling support.
 - No HTTPS enforcement or TLS configuration in the app itself.
-- Strictly random pairing; there is no compatibility or safety matching.
+- Pairing is random among eligible users; there is no compatibility or safety matching.
 - Minimal operational resilience beyond heartbeat cleanup.
 
 ## Known issues and bugs
 
-### 1. README startup instructions are stale
-
-The README references `server.js`, but the project’s real server entry is `index.js`.
-
-Impact: users following the README will attempt to start a non-existent file.
-
-### 2. The project is structured with two different front-end flows
+### 1. The project is structured with two different front-end flows
 
 There is a root static app and a Vite React app under `anonychat-fe`.
 
@@ -162,21 +161,19 @@ The server serves static files from `public/`, but the UI source under `anonycha
 
 Impact: it is easy to get confused about which front-end is the real active app.
 
-### 3. No validation on incoming message payloads
+### 2. Incoming text has no application-level length limit
 
-The server accepts any JSON message and checks only `msg.type === 'text' && msg.data` plus `msg.type === 'typing'`.
+The WebSocket server limits an entire payload to 7 MiB and validates text as a non-empty string. JPEG images are validated and limited to 5 MiB. Text does not have a separate application-level size limit or content moderation.
 
-It does not enforce a maximum message size or validate the shape of `msg.data` beyond truthiness. It also does not sanitize content before forwarding it to a partner.
+Impact: a client can still send large text messages within the WebSocket payload limit, and abusive content is forwarded without moderation.
 
-Impact: a malicious or buggy client can send extremely large or malformed payloads, leading to abuse or noisy behavior.
-
-### 4. The queue cleanup logic is useful but incomplete
+### 3. The queue cleanup logic is useful but incomplete
 
 `cleanupWaiting()` removes stale sockets from the waiting queue, but the queue is still best-effort and highly dependent on the WebSocket lifecycle being clean.
 
 Impact: the queue can still contain stale references if there are edge cases around disconnect timing or error races.
 
-### 5. Heartbeat and disconnect logic can overlap
+### 4. Heartbeat and disconnect logic can overlap
 
 The server calls `disconnect(ws)` from multiple places: `close`, `error`, and heartbeat cleanup.
 
@@ -184,31 +181,13 @@ The logic is defensive but not fully idempotent across all paths. Some state upd
 
 Impact: minor logging/stat drift or redundant queue updates are possible, especially under network instability.
 
-### 6. Front-end online counter is artificially offset
-
-In `anonychat-fe/src/AnonyChat.jsx` the online counter displays:
-
-```js
-<span> {count+121} online </span>
-```
-
-This adds a hardcoded offset to the count instead of displaying the actual server-provided value directly.
-
-Impact: the counter is misleading and design-wise inconsistent with the real online statistics.
-
-### 7. WebSocket reconnect behavior is minimal
-
-The client creates a single WebSocket connection once and does not attempt reconnect logic if the connection drops.
-
-Impact: a temporary network loss or server restart can leave the browser tab disconnected until a refresh.
-
-### 8. Browser input and typing logic are noisy
+### 5. Browser input and typing logic are noisy
 
 The `handleKeyDown` logic in the message input will call `handleTyping()` for any key press except Enter, even when the user is not intentionally typing or when the message is empty.
 
 Impact: typing notifications can fire more often than intended.
 
-### 9. The server has no content moderation or safety layer
+### 6. The server has no content moderation or safety layer
 
 It forwards arbitrary text between users without checking for harassment, abuse, or explicit content.
 
@@ -221,13 +200,14 @@ This project is not designed around privacy hardening or secure communications.
 - It does not authenticate users.
 - It does not encrypt beyond the transport layer used by the browser (e.g. HTTPS/WSS is environment-dependent).
 - It does not protect against abuse, spam, or harassment.
-- It does not store message history or user metadata securely.
+- Message JSONL logs contain plaintext messages, sender/recipient UUIDs, and potentially JPEG data URLs. Log access and retention must be managed by the operator.
+- The four-character peer UUID prefix shown in the UI is not a formal anonymity guarantee.
 
 The anonymous nature is social and technical, but not a formal anonymity or safety guarantee.
 
 ## Practical summary
 
-This is a tiny anonymous stranger chat demo rather than a production-ready messaging platform. It works by keeping a queue of waiting clients, pairing them at random, and forwarding real-time messages over WebSockets. It includes basic logging and a clean UX, but it has notable gaps in startup instructions, queue robustness, safety, validation, scaling, and resilience.
+This is a small anonymous stranger chat demo rather than a production-ready messaging platform. It keeps a queue of waiting clients, pairs eligible users, and forwards real-time messages over WebSockets. It includes reconnect support and message logging, but has notable gaps in queue robustness, safety, text-size validation, and scaling.
 
 The project is best thought of as a prototype or learning example for:
 
