@@ -112,6 +112,12 @@ const useWebSocket = (playSound) => {
           }
         }
 
+        if (msg.system?.toLowerCase().includes('conversation ended')) {
+          setIsUserConnected(false);
+          setPeerIdPrefix('');
+          isReconnecting = false;
+        }
+
         if (msg.system?.toLowerCase().includes('connection lost')) {
           setIsUserConnected(false);
         }
@@ -314,21 +320,23 @@ const SystemMessage = ({ message }) => {
       : 'text-zinc-500';
   const label = normalizedMessage.includes('connection restored')
     ? 'Đã kết nối lại với máy chủ'
-    : normalizedMessage.includes('connection lost. retrying')
-      ? 'Mất kết nối · Đang thử lại'
-      : normalizedMessage.includes('connection lost')
-        ? 'Người lạ mất kết nối · Đang thử lại'
-        : normalizedMessage.includes('reconnected to your stranger')
-          ? 'Đã kết nối lại'
-          : normalizedMessage.includes('stranger reconnected')
-            ? 'Người lạ đã kết nối lại'
-            : normalizedMessage.includes('connected to a stranger')
-              ? 'Đã kết nối'
-              : normalizedMessage.includes('stranger disconnected')
-                ? 'Đã ngắt kết nối'
-                : normalizedMessage.includes('waiting for a stranger')
-                  ? 'Đang chờ người lạ'
-                  : message.system.replace(/^\[SYSTEM\]\s*/i, '');
+    : normalizedMessage.includes('conversation ended')
+      ? 'Đã kết thúc · Đang tìm người mới'
+      : normalizedMessage.includes('connection lost. retrying')
+        ? 'Đang kết nối lại với máy chủ'
+        : normalizedMessage.includes('connection lost')
+          ? 'Người lạ mất kết nối · Đang thử lại'
+          : normalizedMessage.includes('reconnected to your stranger')
+            ? 'Đã kết nối lại'
+            : normalizedMessage.includes('stranger reconnected')
+              ? 'Người lạ đã kết nối lại'
+              : normalizedMessage.includes('connected to a stranger')
+                ? 'Đã kết nối'
+                : normalizedMessage.includes('stranger disconnected')
+                  ? 'Đã ngắt kết nối'
+                  : normalizedMessage.includes('waiting for a stranger')
+                    ? 'Đang chờ người lạ'
+                    : message.system.replace(/^\[SYSTEM\]\s*/i, '');
 
   return (
     <div className="my-2 flex items-center gap-2.5 py-1" role="status">
@@ -372,11 +380,11 @@ const OnlineCounter = ({ count }) => {
 
   return (
     <div
-      className={`inline-flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.18em] text-zinc-300 transition-all duration-300 md:text-[11px] ${isAnimating ? 'scale-[1.02]' : 'scale-100'
+      className={`inline-flex items-center gap-1 whitespace-nowrap text-[9px] font-medium uppercase tracking-[0.08em] text-zinc-300 transition-all duration-300 sm:gap-2 sm:text-[10px] sm:tracking-[0.12em] ${isAnimating ? 'scale-[1.02]' : 'scale-100'
         }`}
     >
       <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-      {count ?? 0} trực tuyến
+      {count ?? 0} online
     </div>
   );
 };
@@ -646,24 +654,31 @@ const MessageInput = ({ onSendMessage, onTyping, isConnected }) => {
   );
 };
 
-const ChatHeader = ({ onlineCount, isUserConnected, peerIdPrefix }) => (
-  <div className="flex shrink-0 items-center justify-between gap-2 rounded-[1.05rem] bg-[#111214]/80 px-3 py-2.5 md:px-4 md:py-3">
-    <div className="min-w-0">
-      <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-zinc-500 md:text-[11px]">anonychat</p>
+const ChatHeader = ({ onlineCount, isUserConnected, peerIdPrefix, onEndConversation }) => (
+  <div className="flex shrink-0 items-center justify-between gap-1.5 rounded-[1.05rem] border border-zinc-800/80 bg-[#111214]/80 px-2.5 py-2.5 sm:gap-2 md:px-4 md:py-3">
+    <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+      <span
+        className={`h-1.5 w-1.5 shrink-0 rounded-full sm:h-2 sm:w-2 ${isUserConnected ? 'bg-emerald-400' : 'bg-zinc-500'}`}
+        role="status"
+        aria-label={isUserConnected ? 'Đã kết nối' : 'Đang tìm người chat'}
+      />
+      <p className="whitespace-nowrap text-[9px] font-medium uppercase tracking-[0.08em] text-zinc-500 sm:text-[10px] sm:tracking-[0.12em]">anonychat</p>
     </div>
-    <div className="flex items-center gap-2 text-right">
+    <div className="flex min-w-0 items-center justify-end gap-1 sm:gap-2">
       <OnlineCounter count={onlineCount} />
-      <div
-        className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[9px] font-medium uppercase tracking-[0.12em] md:text-[10px] ${isUserConnected ? 'bg-zinc-800 text-zinc-200' : 'bg-zinc-900 text-zinc-400'
-          }`}
-      >
-        <span className={`h-1.5 w-1.5 rounded-full ${isUserConnected ? 'bg-emerald-400' : 'bg-zinc-400'}`} />
-        {isUserConnected ? 'Kết nối' : 'Đang tìm'}
-      </div>
       {isUserConnected && peerIdPrefix && (
-        <span className="rounded-md border border-zinc-700/80 bg-zinc-900/70 px-2 py-1 font-mono text-[9px] tracking-[0.12em] text-zinc-400 md:text-[10px]">
+        <span className="flex min-h-7 shrink-0 items-center rounded-full border border-sky-400/25 bg-sky-950/20 px-1.5 font-mono text-[9px] tracking-[0.08em] text-sky-100/80 sm:min-h-9 sm:px-2 sm:text-[10px] sm:tracking-[0.12em]">
           {peerIdPrefix}
         </span>
+      )}
+      {isUserConnected && (
+        <button
+          type="button"
+          onClick={onEndConversation}
+          className="min-h-7 shrink-0 whitespace-nowrap rounded-full border border-rose-400/30 bg-rose-950/30 px-1.5 py-1 text-[9px] font-medium leading-none text-rose-200/80 transition-colors hover:border-rose-300/50 hover:bg-rose-900/40 hover:text-rose-100 sm:min-h-9 sm:px-2 sm:text-[10px]"
+        >
+          Thoát
+        </button>
       )}
     </div>
   </div>
@@ -724,6 +739,10 @@ const AnonyChat = () => {
     }
   };
 
+  const handleEndConversation = () => {
+    sendMessage({ type: 'endConversation' });
+  };
+
   return (
     <div
       className="relative flex h-[100dvh] items-center justify-center overflow-hidden bg-[#08090b] px-3 py-3 text-zinc-100 md:px-8 md:py-8"
@@ -738,7 +757,12 @@ const AnonyChat = () => {
       <div className="pointer-events-none absolute inset-0 opacity-[0.06] [background-image:linear-gradient(rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px)] [background-size:18px_18px]" />
 
       <ChatContainer>
-        <ChatHeader onlineCount={onlineCount} isUserConnected={isUserConnected} peerIdPrefix={peerIdPrefix} />
+        <ChatHeader
+          onlineCount={onlineCount}
+          isUserConnected={isUserConnected}
+          peerIdPrefix={peerIdPrefix}
+          onEndConversation={handleEndConversation}
+        />
         <ChatLog messages={messages} isUserConnected={isUserConnected} />
         <MessageInput onSendMessage={handleSendMessage} onTyping={handleTyping} isConnected={isUserConnected} />
       </ChatContainer>

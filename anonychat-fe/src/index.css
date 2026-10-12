@@ -34,7 +34,10 @@ body {
   background: #08090b;
 }
 
-button,
+button {
+  font-family: inherit;
+}
+
 input {
   font: inherit;
 }
@@ -56,4 +59,3 @@ input {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.18);
 }
-

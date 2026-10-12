@@ -8,6 +8,7 @@ A simple anonymous chat that connects you with a random stranger. Nothing fancy.
 * Typing indicator
 * Send images by selecting a file or pasting one from the clipboard in the message field
 * Automatic reconnect with the same chat partner for up to 30 seconds after a network interruption by default
+* End a conversation at any time; the same two clients are temporarily excluded from matching again
 * Shows the first four characters of the other participant's UUID in the chat header; the full UUID is only used between the client and server for reconnect
 * Allows only one active connection per client UUID; opening the same chat in another tab is rejected without disconnecting the active tab
 * Clean dark UI with Tailwind
@@ -25,8 +26,11 @@ Set `RECONNECT_GRACE_SECONDS` to change how long a disconnected chat session is 
 
 ```powershell
 $env:RECONNECT_GRACE_SECONDS = "60"
+$env:PAIR_REMATCH_COOLDOWN_SECONDS = "15"
 node index.js
 ```
+
+`PAIR_REMATCH_COOLDOWN_SECONDS` defaults to `15` and must be a positive integer. When either person ends a conversation, both return to matching and that UUID pair is excluded until the cooldown expires.
 
 Message content logging is enabled by default. JSONL files are grouped under `logs/messages/YYYY/MM/DD` and rotated at 20 MiB per file. Records include sender and recipient client UUIDs and the message content; images are logged as JPEG data URLs after client-side resizing. These logs contain plaintext and should be protected and deleted according to your retention policy. Set `MESSAGE_LOGGING_ENABLED=false` to disable content logging, or `MESSAGE_LOG_DIR` to change its location. Environment variables must be set in the shell before starting the server.
 

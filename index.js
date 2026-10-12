@@ -14,16 +14,22 @@ const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 7 * 1024 * 10
 const waiting = [];
 const connections = new Set();
 const clients = new Map();
+const blockedPairs = new Map();
 let isShuttingDown = false;
 const reconnectGraceSeconds = Number(process.env.RECONNECT_GRACE_SECONDS ?? 30);
+const pairRematchCooldownSeconds = Number(process.env.PAIR_REMATCH_COOLDOWN_SECONDS ?? 15);
 const messageLoggingSetting = (process.env.MESSAGE_LOGGING_ENABLED ?? 'true').toLowerCase();
 if (!Number.isInteger(reconnectGraceSeconds) || reconnectGraceSeconds <= 0) {
   throw new Error('RECONNECT_GRACE_SECONDS must be a positive integer');
+}
+if (!Number.isInteger(pairRematchCooldownSeconds) || pairRematchCooldownSeconds <= 0) {
+  throw new Error('PAIR_REMATCH_COOLDOWN_SECONDS must be a positive integer');
 }
 if (messageLoggingSetting !== 'true' && messageLoggingSetting !== 'false') {
   throw new Error('MESSAGE_LOGGING_ENABLED must be true or false');
 }
 const RECONNECT_GRACE_MS = reconnectGraceSeconds * 1000;
+const PAIR_REMATCH_COOLDOWN_MS = pairRematchCooldownSeconds * 1000;
 const MESSAGE_LOGGING_ENABLED = messageLoggingSetting === 'true';
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
@@ -102,6 +108,75 @@ function pair(a, b) {
   return true;
 }
 
+function pairKey(clientIdA, clientIdB) {
+  return [clientIdA, clientIdB].sort().join(':');
+}
+
+function isPairBlocked(clientIdA, clientIdB) {
+  const key = pairKey(clientIdA, clientIdB);
+  const block = blockedPairs.get(key);
+  if (!block) return false;
+  if (block.expiresAt > Date.now()) return true;
+
+  clearTimeout(block.timer);
+  blockedPairs.delete(key);
+  return false;
+}
+
+function blockPair(clientIdA, clientIdB) {
+  const key = pairKey(clientIdA, clientIdB);
+  const existingBlock = blockedPairs.get(key);
+  if (existingBlock) clearTimeout(existingBlock.timer);
+
+  const expiresAt = Date.now() + PAIR_REMATCH_COOLDOWN_MS;
+  const timer = setTimeout(() => {
+    const currentBlock = blockedPairs.get(key);
+    if (currentBlock?.expiresAt !== expiresAt) return;
+
+    blockedPairs.delete(key);
+    matchWaiting();
+    updateConnectionStats();
+  }, PAIR_REMATCH_COOLDOWN_MS);
+  timer.unref();
+  blockedPairs.set(key, { expiresAt, timer });
+}
+
+function matchWaiting() {
+  cleanupWaiting();
+
+  for (let i = 0; i < waiting.length; i++) {
+    const a = waiting[i];
+    if (a.readyState !== a.OPEN || a.partner) continue;
+
+    const candidates = [];
+    for (let j = i + 1; j < waiting.length; j++) {
+      const b = waiting[j];
+      if (
+        b.readyState === b.OPEN
+        && !b.partner
+        && !isPairBlocked(a.session.clientId, b.session.clientId)
+      ) {
+        candidates.push(j);
+      }
+    }
+    if (candidates.length === 0) continue;
+
+    const secondIndex = candidates[Math.floor(Math.random() * candidates.length)];
+    const b = waiting.splice(secondIndex, 1)[0];
+    waiting.splice(i, 1);
+    if (!pair(a, b)) {
+      i--;
+      continue;
+    }
+
+    safeSend(a, { type: 'peer', uuidPrefix: b.session.clientId.slice(0, 4) });
+    safeSend(b, { type: 'peer', uuidPrefix: a.session.clientId.slice(0, 4) });
+    safeSend(a, { system: '[SYSTEM] Connected to a stranger.' });
+    safeSend(b, { system: '[SYSTEM] Connected to a stranger.' });
+    i--;
+  }
+}
+
 function safeSend(ws, data) {
   if (ws.readyState === ws.OPEN) {
     try {
@@ -143,12 +218,11 @@ function expireSession(session) {
         safeSend(partner, { system: '[SYSTEM] Stranger disconnected.' });
         chatLogger.pairDisconnected(session.clientId, partnerSession.clientId, 'reconnect_timeout');
 
-        if (!waiting.includes(partner)) {
-          waiting.push(partner);
-          partnerSession.waiting = true;
-          chatLogger.userWaiting(partner.id);
+        if (!partnerSession.waiting) {
+          enqueueSession(partnerSession);
           safeSend(partner, { system: '[SYSTEM] Waiting for a stranger…' });
         }
+        matchWaiting();
       }
     }
   }
@@ -198,6 +272,40 @@ function enqueueSession(session, position = waiting.length) {
   session.waiting = true;
   session.queuedPosition = null;
   chatLogger.userWaiting(ws.id);
+}
+
+function endConversation(ws) {
+  const partner = ws.partner;
+  if (!partner || partner.readyState !== partner.OPEN) return;
+
+  const session = ws.session;
+  const partnerSession = partner.session;
+  if (!session || !partnerSession) return;
+
+  blockPair(session.clientId, partnerSession.clientId);
+  ws.partner = null;
+  partner.partner = null;
+  session.partnerId = null;
+  partnerSession.partnerId = null;
+
+  for (const currentSession of [session, partnerSession]) {
+    clearTimeout(currentSession.reconnectTimer);
+    currentSession.reconnectTimer = null;
+    currentSession.waiting = false;
+    currentSession.queuedPosition = null;
+  }
+
+  chatLogger.pairDisconnected(session.clientId, partnerSession.clientId, 'ended_by_user');
+  safeSend(ws, { system: '[SYSTEM] Conversation ended. Finding a new stranger…' });
+  safeSend(partner, { system: '[SYSTEM] Conversation ended. Finding a new stranger…' });
+
+  enqueueSession(session);
+  enqueueSession(partnerSession);
+  matchWaiting();
+
+  if (session.waiting) safeSend(ws, { system: '[SYSTEM] Waiting for a stranger…' });
+  if (partnerSession.waiting) safeSend(partner, { system: '[SYSTEM] Waiting for a stranger…' });
+  updateConnectionStats();
 }
 
 wss.on('connection', (ws, request) => {
@@ -273,7 +381,6 @@ wss.on('connection', (ws, request) => {
     }
   } else if (isReconnect && session.waiting) {
     enqueueSession(session, session.queuedPosition ?? waiting.length);
-    safeSend(ws, { system: '[SYSTEM] Waiting for a stranger…' });
   }
 
   // Send initial stats to new connection
@@ -289,41 +396,10 @@ wss.on('connection', (ws, request) => {
 
   const restoringSession = isReconnect && (session.partnerId || session.waiting);
   if (!restoringSession) {
-    if (waiting.length > 0) {
-      // Find a valid waiting connection
-      let other = null;
-      let attempts = 0;
-
-      while (waiting.length > 0 && attempts < waiting.length) {
-        const idx = Math.floor(Math.random() * waiting.length);
-        const candidate = waiting[idx];
-
-        if (candidate.readyState === candidate.OPEN && !candidate.partner) {
-          other = waiting.splice(idx, 1)[0];
-          break;
-        } else {
-          // Remove dead connection
-          waiting.splice(idx, 1);
-        }
-        attempts++;
-      }
-
-      if (other && pair(ws, other)) {
-        safeSend(ws, { type: 'peer', uuidPrefix: other.session.clientId.slice(0, 4) });
-        safeSend(other, { type: 'peer', uuidPrefix: session.clientId.slice(0, 4) });
-        safeSend(ws, { system: '[SYSTEM] Connected to a stranger.' });
-        safeSend(other, { system: '[SYSTEM] Connected to a stranger.' });
-      } else {
-        enqueueSession(session);
-        safeSend(ws, { system: '[SYSTEM] Waiting for a stranger…' });
-      }
-    } else {
-      if (!session.waiting) {
-        enqueueSession(session);
-        safeSend(ws, { system: '[SYSTEM] Waiting for a stranger…' });
-      }
-    }
+    enqueueSession(session);
   }
+  matchWaiting();
+  if (session.waiting) safeSend(ws, { system: '[SYSTEM] Waiting for a stranger…' });
 
   // Update stats
   updateConnectionStats();
@@ -336,6 +412,11 @@ wss.on('connection', (ws, request) => {
       msg = JSON.parse(data);
     } catch (error) {
       chatLogger.connectionError(ws.id, new Error('Invalid JSON message'));
+      return;
+    }
+
+    if (msg.type === 'endConversation') {
+      endConversation(ws);
       return;
     }
 
@@ -477,6 +558,8 @@ function shutdown() {
     clearTimeout(session.reconnectTimer);
     session.reconnectTimer = null;
   });
+  blockedPairs.forEach((block) => clearTimeout(block.timer));
+  blockedPairs.clear();
 
   server.close();
   wss.clients.forEach((ws) => ws.close(1001, 'Server shutting down'));
