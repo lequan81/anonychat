@@ -1,5 +1,4 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
-import confetti from 'canvas-confetti';
 import { useTabCoordination } from './hooks/useTabCoordination.js';
 
 const REACTION_EMOJIS = ['❤️', '😂', '😮', '😢', '👍'];
@@ -789,12 +788,12 @@ const SystemMessage = ({ message }) => {
     ? 'bg-emerald-300'
     : isReconnecting
       ? 'bg-amber-300'
-      : 'bg-zinc-500';
+      : 'bg-zinc-400';
   const textStyle = isConnected
-    ? 'text-emerald-200/80'
+    ? 'text-emerald-200'
     : isReconnecting
-      ? 'text-amber-200/80'
-      : 'text-zinc-500';
+      ? 'text-amber-200'
+      : 'text-zinc-400';
   const label = normalizedMessage.includes('connection restored')
     ? 'Đã kết nối lại với máy chủ'
     : normalizedMessage.includes('conversation ended')
@@ -819,7 +818,7 @@ const SystemMessage = ({ message }) => {
     <div className="my-2 flex items-center gap-2.5 py-1" role="status">
       <span className="h-px flex-1 bg-zinc-800/80" />
       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotStyle} ${countdownActive ? 'motion-safe:animate-pulse' : ''}`} />
-      <span className={`text-center text-[9px] font-medium tracking-wide ${textStyle}`}>
+      <span className={`text-center text-xs font-medium tracking-wide ${textStyle}`}>
         {label}
         {hasCountdown && !message.reconnectEndedAt ? ` · ${remainingSeconds}s` : ''}
       </span>
@@ -857,10 +856,10 @@ const OnlineCounter = ({ count }) => {
 
   return (
     <div
-      className={`inline-flex items-center gap-1 whitespace-nowrap text-[9px] font-medium uppercase tracking-[0.08em] text-zinc-300 transition-all duration-300 sm:gap-2 sm:text-[10px] sm:tracking-[0.12em] ${isAnimating ? 'scale-[1.02]' : 'scale-100'
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium text-zinc-300 transition-all duration-300 ${isAnimating ? 'scale-[1.02]' : 'scale-100'
         }`}
     >
-      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+      <span className="h-2 w-2 rounded-full bg-emerald-400" />
       {count ?? 0} online
     </div>
   );
@@ -1302,33 +1301,33 @@ const DonationModal = ({ onClose }) => {
 };
 
 const ChatHeader = ({ onlineCount, hasActiveConversation, isUserConnected, onEndConversation, onOpenDonation }) => (
-  <div className="flex shrink-0 items-center justify-between gap-1.5 rounded-[1.05rem] border border-zinc-800/80 bg-[#111214]/80 px-2.5 py-2.5 sm:gap-2 md:px-4 md:py-3">
-    <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+  <div className="flex shrink-0 items-center justify-between gap-2 rounded-[1.05rem] border border-zinc-800/80 bg-[#111214]/80 px-3 py-2.5 sm:px-4 sm:py-3">
+    <div className="flex min-w-0 items-center gap-2">
       <span
-        className={`h-1.5 w-1.5 shrink-0 rounded-full sm:h-2 sm:w-2 ${isUserConnected ? 'bg-emerald-400' : 'bg-zinc-500'}`}
+        className={`h-2 w-2 shrink-0 rounded-full ${isUserConnected ? 'bg-emerald-400' : 'bg-zinc-500'}`}
         role="status"
         aria-label={isUserConnected ? 'Đã kết nối' : 'Đang tìm người chat'}
       />
-      <p className="whitespace-nowrap text-[9px] font-medium uppercase tracking-[0.08em] text-zinc-500 sm:text-[10px] sm:tracking-[0.12em]">anonychat</p>
+      <p className="whitespace-nowrap text-xs font-medium uppercase tracking-[0.12em] text-zinc-400">anonychat</p>
       <button
         type="button"
         onClick={onOpenDonation}
-        className="inline-flex min-h-8 shrink-0 items-center justify-center gap-1 rounded-full border border-rose-300/20 bg-rose-400/10 px-2 text-[10px] font-medium text-rose-200 transition-colors hover:border-rose-300/40 hover:bg-rose-400/20 active:scale-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300"
+        className="inline-flex min-h-11 min-w-[44px] shrink-0 items-center justify-center gap-1.5 rounded-full border border-rose-300/20 bg-rose-400/10 px-3 py-2 text-xs font-medium text-rose-200 transition-colors hover:border-rose-300/40 hover:bg-rose-400/20 active:scale-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300"
         aria-label="Ủng hộ AnonyChat"
       >
-        <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4" aria-hidden="true">
           <path d="M12 21s-8.25-4.73-8.25-11.06A4.69 4.69 0 0 1 12 7.26a4.69 4.69 0 0 1 8.25 2.68C20.25 16.27 12 21 12 21Z" />
         </svg>
         <span className="hidden min-[380px]:inline">Ủng hộ</span>
       </button>
     </div>
-    <div className="flex min-w-0 items-center justify-end gap-1 sm:gap-2">
+    <div className="flex min-w-0 items-center justify-end gap-2">
       <OnlineCounter count={onlineCount} />
       {hasActiveConversation && (
         <button
           type="button"
           onClick={onEndConversation}
-          className="min-h-7 shrink-0 whitespace-nowrap rounded-full border border-rose-400/30 bg-rose-950/30 px-1.5 py-1 text-[9px] font-medium leading-none text-rose-200/80 transition-colors hover:border-rose-300/50 hover:bg-rose-900/40 hover:text-rose-100 sm:min-h-9 sm:px-2 sm:text-[10px]"
+          className="min-h-11 min-w-[44px] shrink-0 whitespace-nowrap rounded-full border border-rose-400/30 bg-rose-950/40 px-3 py-2 text-xs font-medium leading-none text-rose-200 transition-colors hover:border-rose-300/50 hover:bg-rose-900/40 hover:text-rose-100 active:scale-[0.97]"
         >
           Thoát
         </button>
@@ -1361,38 +1360,6 @@ const ChatApp = () => {
     clearFeedbackStatus
   } = useWebSocket(playSound, isPrimaryTab);
 
-  useEffect(() => {
-    const pageTitle = 'AnonyChat | Anonymous Chat with Strangers Online';
-    const pageDescription = 'AnonyChat is a free anonymous chat app for one-on-one stranger conversations and instant online messaging. Trò chuyện ẩn danh miễn phí với người lạ trực tuyến và gửi tin nhắn riêng tư ngay tức thì.';
-    const pageKeywords = 'anonymous chat, random chat, stranger chat, online chat, private chat, trò chuyện ẩn danh, chat với người lạ, chat trực tuyến, tin nhắn ẩn danh';
-
-    document.title = pageTitle;
-
-    const setMeta = (selector, content) => {
-      let element = document.head.querySelector(selector);
-      if (!element) {
-        element = document.createElement('meta');
-        if (selector.startsWith('meta[name=')) {
-          const attributeName = selector.match(/meta\[name="([^"]+)"\]/)?.[1];
-          if (attributeName) {
-            element.setAttribute('name', attributeName);
-          }
-        } else if (selector.startsWith('meta[property=')) {
-          const attributeName = selector.match(/meta\[property="([^"]+)"\]/)?.[1];
-          if (attributeName) {
-            element.setAttribute('property', attributeName);
-          }
-        }
-        document.head.appendChild(element);
-      }
-      element.setAttribute('content', content);
-    };
-
-    setMeta('meta[name="description"]', pageDescription);
-    setMeta('meta[name="keywords"]', pageKeywords);
-    setMeta('meta[property="og:title"]', pageTitle);
-    setMeta('meta[property="og:description"]', pageDescription);
-  }, []);
   const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
@@ -1485,34 +1452,44 @@ const ChatApp = () => {
       || window.matchMedia('(prefers-reduced-motion: reduce)').matches
     ) return;
 
-    const intensity = activeCelebrationIntensity;
-    const iconShape = confetti.shapeFromText({
-      text: activeCelebrationIcon,
-      scalar: 1.4 + intensity * 0.12
-    });
-    const burst = (particleRatio, options) => confetti({
-      angle: options.angle,
-      spread: options.spread,
-      startVelocity: 34 + intensity * 6,
-      decay: 0.9,
-      gravity: 0.85,
-      ticks: 180 + intensity * 50,
-      particleCount: Math.round((18 + intensity * 18) * particleRatio),
-      origin: { x: options.originX, y: 0.1 },
-      colors: ['#a7f3d0', '#bfdbfe', '#fde68a', '#fbcfe8', '#ffffff'],
-      scalar: 0.9 + intensity * 0.12,
-      shapes: [iconShape]
+    let cancelled = false;
+    let timer;
+
+    import('canvas-confetti').then((module) => {
+      if (cancelled) return;
+      const confetti = module.default;
+      const intensity = activeCelebrationIntensity;
+      const iconShape = confetti.shapeFromText({
+        text: activeCelebrationIcon,
+        scalar: 1.4 + intensity * 0.12
+      });
+      const burst = (particleRatio, options) => confetti({
+        angle: options.angle,
+        spread: options.spread,
+        startVelocity: 34 + intensity * 6,
+        decay: 0.9,
+        gravity: 0.85,
+        ticks: 180 + intensity * 50,
+        particleCount: Math.round((18 + intensity * 18) * particleRatio),
+        origin: { x: options.originX, y: 0.1 },
+        colors: ['#a7f3d0', '#bfdbfe', '#fde68a', '#fbcfe8', '#ffffff'],
+        scalar: 0.9 + intensity * 0.12,
+        shapes: [iconShape]
+      });
+
+      burst(0.5, { angle: 60, spread: 55, originX: 0.12 });
+      burst(0.5, { angle: 120, spread: 55, originX: 0.88 });
+      if (intensity >= 3) {
+        timer = window.setTimeout(() => {
+          if (!cancelled) burst(0.35, { angle: 90, spread: 100, originX: 0.5 });
+        }, 240);
+      }
     });
 
-    burst(0.5, { angle: 60, spread: 55, originX: 0.12 });
-    burst(0.5, { angle: 120, spread: 55, originX: 0.88 });
-    if (intensity >= 3) {
-      const secondBurst = window.setTimeout(() => {
-        burst(0.35, { angle: 90, spread: 100, originX: 0.5 });
-      }, 240);
-      return () => window.clearTimeout(secondBurst);
-    }
-    return undefined;
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
   }, [activeCelebrationIcon, activeCelebrationIntensity, activeCelebrationRevision]);
 
   useEffect(() => {
