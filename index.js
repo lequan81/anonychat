@@ -29,8 +29,8 @@ app.get('/healthz', (request, response) => {
   response.status(isShuttingDown ? 503 : 200).type('text/plain').send(isShuttingDown ? 'shutting down' : 'ok');
 });
 const reconnectGraceSeconds = Number(process.env.RECONNECT_GRACE_SECONDS ?? 120);
-const heartbeatIntervalSeconds = Number(process.env.WS_HEARTBEAT_INTERVAL_SECONDS ?? 10);
-const heartbeatMissedThreshold = Number(process.env.WS_HEARTBEAT_MISSED_THRESHOLD ?? 2);
+const heartbeatIntervalSeconds = Number(process.env.WS_HEARTBEAT_INTERVAL_SECONDS ?? 15);
+const heartbeatMissedThreshold = Number(process.env.WS_HEARTBEAT_MISSED_THRESHOLD ?? 3);
 const pairRematchCooldownSeconds = Number(process.env.PAIR_REMATCH_COOLDOWN_SECONDS ?? 15);
 const messageLoggingSetting = (process.env.MESSAGE_LOGGING_ENABLED ?? 'true').toLowerCase();
 if (!Number.isInteger(reconnectGraceSeconds) || reconnectGraceSeconds <= 0) {
@@ -370,7 +370,8 @@ function disconnect(ws) {
   // Cancel any in-flight image transfers initiated by this socket
   if (ws.imageTransfers?.size > 0) {
     const currentPartner = ws.partner;
-    for (const [transferId] of ws.imageTransfers) {
+    for (const [transferId, transfer] of ws.imageTransfers) {
+      clearTimeout(transfer.timeout);
       if (currentPartner?.readyState === currentPartner?.OPEN) {
         safeSend(currentPartner, { type: 'image_cancel', id: transferId, reason: 'disconnected' });
       }
@@ -475,6 +476,7 @@ function handleBinaryChunk(ws, data) {
 
   const partner = ws.partner;
   if (!partner || partner.readyState !== partner.OPEN) {
+    clearTimeout(transfer.timeout);
     ws.imageTransfers.delete(transferId);
     safeSend(ws, { type: 'image_cancel', id: transferId, reason: 'no_partner' });
     return;
@@ -499,6 +501,7 @@ function handleBinaryChunk(ws, data) {
         message: `[chunked:${transfer.totalChunks}:${transfer.totalBytes}b]`
       }).catch((err) => chatLogger.connectionError(ws.id, err));
     }
+    clearTimeout(transfer.timeout);
     ws.imageTransfers.delete(transferId);
   }
 }
@@ -647,10 +650,22 @@ wss.on('connection', (ws, request) => {
         return;
       }
 
+      const timeout = setTimeout(() => {
+        if (ws.imageTransfers?.has(id)) {
+          ws.imageTransfers.delete(id);
+          safeSend(ws, { type: 'image_cancel', id, reason: 'timeout' });
+          if (ws.partner?.readyState === ws.partner?.OPEN) {
+            safeSend(ws.partner, { type: 'image_cancel', id, reason: 'timeout' });
+          }
+        }
+      }, 60000);
+      timeout.unref();
+
       ws.imageTransfers.set(id, {
         totalChunks,
         totalBytes,
-        chunksRelayed: 0
+        chunksRelayed: 0,
+        timeout
       });
 
       safeSend(ws.partner, {
@@ -775,22 +790,6 @@ wss.on('connection', (ws, request) => {
       const recipient = ws.partner;
       const messageLength = isTextMessage ? Buffer.byteLength(msg.data, 'utf8') : imageBytes.length;
 
-      if (MESSAGE_LOGGING_ENABLED) {
-        try {
-          await appendMessageLog({
-            timestamp: new Date().toISOString(),
-            fromUuid: ws.session.clientId,
-            toUuid: recipient.session.clientId,
-            type: isTextMessage ? 'text' : 'image',
-            message: msg.data
-          });
-        } catch (error) {
-          chatLogger.connectionError(ws.id, error);
-          safeSend(ws, { system: '[SYSTEM] Message could not be saved. It was not sent.' });
-          return;
-        }
-      }
-
       if (ws.partner !== recipient || recipient.readyState !== recipient.OPEN) {
         safeSend(ws, { system: '[SYSTEM] No partner available.' });
         return;
@@ -813,6 +812,18 @@ wss.on('connection', (ws, request) => {
         id: messageId,
         messageIndex: Number.isSafeInteger(msg.messageIndex) ? msg.messageIndex : undefined
       });
+
+      if (MESSAGE_LOGGING_ENABLED) {
+        appendMessageLog({
+          timestamp: new Date().toISOString(),
+          fromUuid: ws.session.clientId,
+          toUuid: recipient.session.clientId,
+          type: isTextMessage ? 'text' : 'image',
+          message: msg.data
+        }).catch((error) => {
+          chatLogger.connectionError(ws.id, error);
+        });
+      }
     }
 
     if (msg.type === 'typing') {
