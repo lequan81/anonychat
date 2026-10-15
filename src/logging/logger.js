@@ -1,63 +1,59 @@
-// logger.js
-import winston from 'winston';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import fs from "fs";
+import path from "path";
+import winston from "winston";
+import { LOGS_DIRECTORY } from "../config/index.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// Create logs directory if it doesn't exist
-import fs from 'fs';
-const logsDir = path.join(__dirname, 'logs');
-if (!fs.existsSync(logsDir)) {
-  fs.mkdirSync(logsDir);
+// Ensure logs directory exists
+if (!fs.existsSync(LOGS_DIRECTORY)) {
+  fs.mkdirSync(LOGS_DIRECTORY, { recursive: true });
 }
 
 // Custom format for structured logging
 const customFormat = winston.format.combine(
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+  winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
   winston.format.errors({ stack: true }),
   winston.format.json()
 );
 
 // Create logger instance
 const logger = winston.createLogger({
-  level: 'info',
+  level: "info",
   format: customFormat,
   transports: [
     // General application logs
     new winston.transports.File({
-      filename: path.join(logsDir, 'app.log'),
+      filename: path.join(LOGS_DIRECTORY, "app.log"),
       maxsize: 10 * 1024 * 1024, // 10MB
       maxFiles: 5,
-      tailable: true
+      tailable: true,
     }),
-    
+
     // Error logs
     new winston.transports.File({
-      filename: path.join(logsDir, 'error.log'),
-      level: 'error',
+      filename: path.join(LOGS_DIRECTORY, "error.log"),
+      level: "error",
       maxsize: 10 * 1024 * 1024,
       maxFiles: 3,
-      tailable: true
+      tailable: true,
     }),
-    
+
     // Metrics logs (separate file for analytics)
     new winston.transports.File({
-      filename: path.join(logsDir, 'metrics.log'),
-      level: 'info',
+      filename: path.join(LOGS_DIRECTORY, "metrics.log"),
+      level: "info",
       maxsize: 50 * 1024 * 1024, // 50MB for metrics
       maxFiles: 10,
-      tailable: true
+      tailable: true,
     }),
-    
+
     // Console output for development
     new winston.transports.Console({
       format: winston.format.combine(
         winston.format.colorize(),
         winston.format.simple()
-      )
-    })
-  ]
+      ),
+    }),
+  ],
 });
 
 // Chat-specific logging functions
@@ -70,9 +66,9 @@ class ChatLogger {
       waitingUsers: 0,
       activePairs: 0,
       messagesSent: 0,
-      errors: 0
+      errors: 0,
     };
-    
+
     // Log stats every 5 minutes
     this.metricsInterval = setInterval(() => {
       this.logMetrics();
@@ -83,26 +79,26 @@ class ChatLogger {
   userConnected(connectionId) {
     this.stats.totalConnections++;
     this.stats.currentConnections++;
-    
-    this.logger.info('User connected', {
-      event: 'user_connected',
+
+    this.logger.info("User connected", {
+      event: "user_connected",
       connectionId,
       currentConnections: this.stats.currentConnections,
       waitingUsers: this.stats.waitingUsers,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
 
-  userDisconnected(connectionId, reason = 'unknown') {
+  userDisconnected(connectionId, reason = "unknown") {
     this.stats.currentConnections--;
-    
-    this.logger.info('User disconnected', {
-      event: 'user_disconnected',
+
+    this.logger.info("User disconnected", {
+      event: "user_disconnected",
       connectionId,
       reason,
       currentConnections: this.stats.currentConnections,
       waitingUsers: this.stats.waitingUsers,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
 
@@ -110,106 +106,106 @@ class ChatLogger {
   usersPaired(user1Id, user2Id) {
     this.stats.activePairs++;
     this.stats.waitingUsers = Math.max(0, this.stats.waitingUsers - 2);
-    
-    this.logger.info('Users paired', {
-      event: 'users_paired',
+
+    this.logger.info("Users paired", {
+      event: "users_paired",
       user1Id,
       user2Id,
       activePairs: this.stats.activePairs,
       waitingUsers: this.stats.waitingUsers,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
 
   userWaiting(connectionId) {
     this.stats.waitingUsers++;
-    
-    this.logger.info('User waiting', {
-      event: 'user_waiting',
+
+    this.logger.info("User waiting", {
+      event: "user_waiting",
       connectionId,
       waitingUsers: this.stats.waitingUsers,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
 
-  pairDisconnected(user1Id, user2Id, reason = 'unknown') {
+  pairDisconnected(user1Id, user2Id, reason = "unknown") {
     this.stats.activePairs--;
-    
-    this.logger.info('Pair disconnected', {
-      event: 'pair_disconnected',
+
+    this.logger.info("Pair disconnected", {
+      event: "pair_disconnected",
       user1Id,
       user2Id,
       reason,
       activePairs: this.stats.activePairs,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
 
   // Message events
   messageSent(fromId, toId, messageLength) {
     this.stats.messagesSent++;
-    
-    this.logger.info('Message sent', {
-      event: 'message_sent',
+
+    this.logger.info("Message sent", {
+      event: "message_sent",
       fromId,
       toId,
       messageLength,
       totalMessages: this.stats.messagesSent,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
 
   typingIndicator(fromId, toId) {
-    this.logger.debug('Typing indicator', {
-      event: 'typing_indicator',
+    this.logger.debug("Typing indicator", {
+      event: "typing_indicator",
       fromId,
       toId,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
 
   // Error events
   connectionError(connectionId, error) {
     this.stats.errors++;
-    
-    this.logger.error('Connection error', {
-      event: 'connection_error',
+
+    this.logger.error("Connection error", {
+      event: "connection_error",
       connectionId,
       error: error.message,
       stack: error.stack,
       totalErrors: this.stats.errors,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
 
   pairingError(error, waitingCount) {
     this.stats.errors++;
-    
-    this.logger.error('Pairing error', {
-      event: 'pairing_error',
+
+    this.logger.error("Pairing error", {
+      event: "pairing_error",
       error: error.message,
       waitingCount,
       totalErrors: this.stats.errors,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
 
   // System events
   serverStarted(port) {
-    this.logger.info('Server started', {
-      event: 'server_started',
+    this.logger.info("Server started", {
+      event: "server_started",
       port,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
 
   serverStopped() {
-    this.logger.info('Server stopped', {
-      event: 'server_stopped',
+    this.logger.info("Server stopped", {
+      event: "server_stopped",
       finalStats: this.stats,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
-    
+
     if (this.metricsInterval) {
       clearInterval(this.metricsInterval);
     }
@@ -217,35 +213,35 @@ class ChatLogger {
 
   // Cleanup events
   cleanupPerformed(removedConnections) {
-    this.logger.info('Cleanup performed', {
-      event: 'cleanup_performed',
+    this.logger.info("Cleanup performed", {
+      event: "cleanup_performed",
       removedConnections,
       currentConnections: this.stats.currentConnections,
       waitingUsers: this.stats.waitingUsers,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
 
   heartbeatCheck(aliveConnections, deadConnections) {
-    this.logger.debug('Heartbeat check', {
-      event: 'heartbeat_check',
+    this.logger.debug("Heartbeat check", {
+      event: "heartbeat_check",
       aliveConnections,
       deadConnections,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
 
   // Metrics logging
   logMetrics() {
     const metrics = {
-      event: 'metrics_snapshot',
+      event: "metrics_snapshot",
       timestamp: new Date().toISOString(),
       stats: { ...this.stats },
       memory: process.memoryUsage(),
-      uptime: process.uptime()
+      uptime: process.uptime(),
     };
-    
-    this.logger.info('Metrics snapshot', metrics);
+
+    this.logger.info("Metrics snapshot", metrics);
   }
 
   // Update stats manually
