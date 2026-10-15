@@ -58,7 +58,7 @@ export const ChatHeader = React.memo(({
       <button
         type="button"
         onClick={onOpenFeedback}
-        className="inline-flex min-h-11 min-w-[44px] shrink-0 items-center justify-center gap-1 rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1.5 text-xs text-zinc-400 transition-colors hover:border-zinc-700 hover:bg-zinc-800 hover:text-zinc-200 active:scale-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400"
+        className="inline-flex min-h-11 min-w-[44px] shrink-0 items-center justify-center gap-1 rounded-full border border-zinc-800 bg-zinc-900/60 px-2.5 py-1.5 text-xs text-zinc-400 transition-colors hover:border-zinc-700 hover:bg-zinc-800 hover:text-zinc-200 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400"
         aria-label="Góp ý với admin"
         title="Góp ý với admin"
       >
@@ -81,7 +81,7 @@ export const ChatHeader = React.memo(({
       <button
         type="button"
         onClick={onOpenDonation}
-        className="inline-flex min-h-11 min-w-[44px] shrink-0 items-center justify-center gap-1.5 rounded-full border border-rose-400/20 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-200 transition-colors hover:border-rose-400/40 hover:bg-rose-500/20 active:scale-[0.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300"
+        className="inline-flex min-h-11 min-w-[44px] shrink-0 items-center justify-center gap-1.5 rounded-full border border-rose-400/20 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-200 transition-colors hover:border-rose-400/40 hover:bg-rose-500/20 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300"
         aria-label="Ủng hộ AnonyChat"
       >
         <svg viewBox="0 0 24 24" fill="currentColor" className="h-3.5 w-3.5 text-rose-400" aria-hidden="true">

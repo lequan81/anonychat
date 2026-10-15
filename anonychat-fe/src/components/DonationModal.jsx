@@ -44,7 +44,7 @@ export const DonationModal = React.memo(({ onClose }) => {
           ref={closeButtonRef}
           type="button"
           onClick={onClose}
-          className="absolute right-3.5 top-3.5 inline-flex h-9 w-9 items-center justify-center rounded-full text-xl leading-none text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300"
+          className="absolute right-3.5 top-3.5 inline-flex h-9 w-9 items-center justify-center rounded-full text-xl leading-none text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-300"
           aria-label="Đóng cửa sổ ủng hộ"
         >
           ×
