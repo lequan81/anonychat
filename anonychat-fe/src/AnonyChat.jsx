@@ -1,5 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import confetti from 'canvas-confetti';
+import { useTabCoordination } from './hooks/useTabCoordination.js';
 
 const REACTION_EMOJIS = ['❤️', '😂', '😮', '😢', '👍'];
 const ACTIVITY_MILESTONES = [10, 25, 50, 100, 250, 500, 1000];
@@ -71,7 +72,7 @@ const useAudio = () => {
   return { playSound };
 };
 
-const useWebSocket = (playSound) => {
+const useWebSocket = (playSound, enabled = true) => {
   const [ws, setWs] = useState(null);
   const [isUserConnected, setIsUserConnected] = useState(false);
   const [hasActiveConversation, setHasActiveConversation] = useState(false);
@@ -108,6 +109,13 @@ const useWebSocket = (playSound) => {
   }, []);
 
   useEffect(() => {
+    if (!enabled) {
+      setWs(null);
+      setIsUserConnected(false);
+      setHasActiveConversation(false);
+      return undefined;
+    }
+
     const storageKey = 'anonychat-client-id';
     let clientId = window.localStorage.getItem(storageKey);
     if (!clientId) {
@@ -495,7 +503,7 @@ const useWebSocket = (playSound) => {
         websocket.close();
       }
     };
-  }, [playSound, recordActivityEvent, revokeAllBlobUrls]);
+  }, [playSound, recordActivityEvent, revokeAllBlobUrls, enabled]);
 
   const sendMessage = (data) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -1336,6 +1344,7 @@ const ChatContainer = ({ children }) => (
 );
 
 const ChatApp = () => {
+  const { isPrimaryTab, claimPrimary } = useTabCoordination();
   const { playSound } = useAudio();
   const {
     isUserConnected,
@@ -1350,7 +1359,7 @@ const ChatApp = () => {
     sendFeedback,
     feedbackStatus,
     clearFeedbackStatus
-  } = useWebSocket(playSound);
+  } = useWebSocket(playSound, isPrimaryTab);
 
   useEffect(() => {
     const pageTitle = 'AnonyChat | Anonymous Chat with Strangers Online';
@@ -1629,6 +1638,28 @@ const ChatApp = () => {
         />
       )}
       {isDonationOpen && <DonationModal onClose={handleCloseDonation} />}
+      {!isPrimaryTab && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-md">
+          <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-zinc-900/95 p-6 text-center shadow-2xl">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/10 text-2xl text-amber-400">
+              ⚠️
+            </div>
+            <h2 className="text-base font-semibold text-zinc-100">
+              Đang mở ở một tab khác
+            </h2>
+            <p className="mt-2 text-xs leading-relaxed text-zinc-400">
+              Để bảo đảm phiên chat liên tục và tránh lỗi xung đột, AnonyChat chỉ duy trì 1 tab hoạt động cùng lúc.
+            </p>
+            <button
+              type="button"
+              onClick={claimPrimary}
+              className="mt-5 w-full rounded-xl bg-zinc-100 px-4 py-3 text-xs font-semibold text-zinc-900 transition-colors hover:bg-white active:scale-[0.98]"
+            >
+              Sử dụng tại tab này
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
