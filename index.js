@@ -10,6 +10,14 @@ import { appendFeedbackLog, readRecentFeedback } from './feedbackLog.js';
 
 const app = express();
 const publicDirectory = path.resolve('public');
+app.use((request, response, next) => {
+  response.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'strict-origin-when-cross-origin'
+  });
+  next();
+});
 app.use(express.json({ limit: '16kb' }));
 app.use(express.static(publicDirectory));
 app.use('/api/admin', (request, response, next) => {
@@ -59,6 +67,41 @@ const FEEDBACK_COOLDOWN_MS = 60 * 1000;
 const MAX_ADMIN_ANNOUNCEMENT_LENGTH = 1000;
 const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const adminSessions = new Map();
+const failedAdminLogins = new Map(); // ip -> { count: number, lockedUntil: number }
+const MAX_ADMIN_LOGIN_ATTEMPTS = 5;
+const ADMIN_LOCK_DURATION_MS = 15 * 60 * 1000;
+
+const MAX_CONCURRENT_WS_PER_IP = Number(process.env.MAX_CONCURRENT_WS_PER_IP ?? 3);
+const MAX_WS_CONNECTS_PER_MINUTE = Number(process.env.MAX_WS_CONNECTS_PER_MINUTE ?? 10);
+const wsConnectionsByIp = new Map(); // ip -> Set<ws>
+const wsConnectTimestampsByIp = new Map(); // ip -> number[]
+
+function getClientIp(request) {
+  const forwarded = request.headers['x-forwarded-for'];
+  if (forwarded) {
+    return forwarded.split(',')[0].trim();
+  }
+  return request.socket?.remoteAddress || 'unknown';
+}
+
+function isOriginAllowed(origin, host) {
+  if (!origin) return true;
+  try {
+    const originUrl = new URL(origin);
+    if (originUrl.host === host || originUrl.hostname === 'localhost' || originUrl.hostname === '127.0.0.1') {
+      return true;
+    }
+    if (process.env.ALLOWED_ORIGINS) {
+      const allowed = process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim().toLowerCase());
+      if (allowed.includes(origin.toLowerCase()) || allowed.includes(originUrl.origin.toLowerCase())) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
 
 function isAdminPasswordValid(password) {
   const configuredPassword = process.env.ADMIN_PASSWORD;
@@ -84,16 +127,43 @@ function getAdminSession(request) {
 }
 
 app.post('/api/admin/login', (request, response) => {
+  const clientIp = getClientIp(request);
+  const now = Date.now();
+  const lockInfo = failedAdminLogins.get(clientIp);
+
+  if (lockInfo && lockInfo.lockedUntil > now) {
+    const remainingMinutes = Math.ceil((lockInfo.lockedUntil - now) / 60000);
+    response.status(429).json({
+      error: `Quá nhiều lần đăng nhập sai. Vui lòng thử lại sau ${remainingMinutes} phút.`
+    });
+    return;
+  }
+
   if (!process.env.ADMIN_PASSWORD) {
     response.status(503).json({ error: 'Trang admin chưa được cấu hình trên server.' });
     return;
   }
   if (typeof request.body?.password !== 'string' || !isAdminPasswordValid(request.body.password)) {
-    response.status(401).json({ error: 'Mật khẩu admin không đúng.' });
+    const attempts = (lockInfo?.count || 0) + 1;
+    const lockedUntil = attempts >= MAX_ADMIN_LOGIN_ATTEMPTS ? now + ADMIN_LOCK_DURATION_MS : 0;
+    failedAdminLogins.set(clientIp, { count: attempts, lockedUntil });
+
+    if (lockedUntil > 0) {
+      response.status(429).json({
+        error: 'Bạn đã nhập sai mật khẩu 5 lần. IP bị tạm khóa trong 15 phút.'
+      });
+      return;
+    }
+
+    response.status(401).json({
+      error: `Mật khẩu admin không đúng. Còn ${MAX_ADMIN_LOGIN_ATTEMPTS - attempts} lần thử.`
+    });
     return;
   }
 
-  const now = Date.now();
+  failedAdminLogins.delete(clientIp);
+
+  // prune expired sessions
   for (const [token, expiresAt] of adminSessions) {
     if (expiresAt <= now) adminSessions.delete(token);
   }
@@ -361,6 +431,14 @@ function expireSession(session) {
 }
 
 function disconnect(ws) {
+  if (ws.clientIp) {
+    const ipSockets = wsConnectionsByIp.get(ws.clientIp);
+    if (ipSockets) {
+      ipSockets.delete(ws);
+      if (ipSockets.size === 0) wsConnectionsByIp.delete(ws.clientIp);
+    }
+  }
+
   const session = ws.session;
   connections.delete(ws);
 
@@ -507,6 +585,39 @@ function handleBinaryChunk(ws, data) {
 }
 
 wss.on('connection', (ws, request) => {
+  const clientIp = getClientIp(request);
+
+  if (!isOriginAllowed(request.headers.origin, request.headers.host)) {
+    chatLogger.connectionError('ws-origin', new Error(`Origin not allowed: ${request.headers.origin} from IP ${clientIp}`));
+    ws.close(1008, 'Origin not allowed');
+    return;
+  }
+
+  const now = Date.now();
+  let timestamps = wsConnectTimestampsByIp.get(clientIp) || [];
+  timestamps = timestamps.filter((t) => now - t < 60000);
+  if (timestamps.length >= MAX_WS_CONNECTS_PER_MINUTE) {
+    chatLogger.connectionError('ws-rate-limit', new Error(`Connection rate limit reached for IP ${clientIp}`));
+    ws.close(1008, 'Too many connections, please wait a moment');
+    return;
+  }
+  timestamps.push(now);
+  wsConnectTimestampsByIp.set(clientIp, timestamps);
+
+  let ipSockets = wsConnectionsByIp.get(clientIp);
+  if (!ipSockets) {
+    ipSockets = new Set();
+    wsConnectionsByIp.set(clientIp, ipSockets);
+  }
+  if (ipSockets.size >= MAX_CONCURRENT_WS_PER_IP) {
+    chatLogger.connectionError('ws-concurrency', new Error(`Max concurrent connections reached for IP ${clientIp}`));
+    ws.close(1008, 'Too many active sessions from this IP');
+    return;
+  }
+  ipSockets.add(ws);
+  ws.clientIp = clientIp;
+  ws.rateWindow = { start: Date.now(), textCount: 0, eventCount: 0 };
+
   const clientId = new URL(request.url, 'http://localhost').searchParams.get('clientId');
   if (!clientId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientId)) {
     ws.close(1008, 'A valid clientId is required');
@@ -597,6 +708,11 @@ wss.on('connection', (ws, request) => {
     ws.isAlive = true;
     ws.missedHeartbeats = 0;
 
+    const now = Date.now();
+    if (now - ws.rateWindow.start > 1000) {
+      ws.rateWindow = { start: now, textCount: 0, eventCount: 0 };
+    }
+
     if (isBinary) {
       handleBinaryChunk(ws, data);
       return;
@@ -608,6 +724,18 @@ wss.on('connection', (ws, request) => {
     } catch (error) {
       chatLogger.connectionError(ws.id, new Error('Invalid JSON message'));
       return;
+    }
+
+    if (msg.type === 'text') {
+      ws.rateWindow.textCount++;
+      if (ws.rateWindow.textCount > 5) {
+        return; // throttle excess text messages
+      }
+    } else if (msg.type === 'reaction' || msg.type === 'typing') {
+      ws.rateWindow.eventCount++;
+      if (ws.rateWindow.eventCount > 8) {
+        return; // throttle excess events
+      }
     }
 
     if (msg.type === 'endConversation') {
