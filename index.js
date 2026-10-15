@@ -61,6 +61,7 @@ const WS_HEARTBEAT_INTERVAL_MS = heartbeatIntervalSeconds * 1000;
 const PAIR_REMATCH_COOLDOWN_MS = pairRematchCooldownSeconds * 1000;
 const MESSAGE_LOGGING_ENABLED = messageLoggingSetting === 'true';
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_TEXT_MESSAGE_LENGTH = 2000;
 const MAX_FEEDBACK_LENGTH = 2000;
 const MAX_FEEDBACK_USERNAME_LENGTH = 80;
 const FEEDBACK_COOLDOWN_MS = 60 * 1000;
@@ -70,6 +71,17 @@ const adminSessions = new Map();
 const failedAdminLogins = new Map(); // ip -> { count: number, lockedUntil: number }
 const MAX_ADMIN_LOGIN_ATTEMPTS = 5;
 const ADMIN_LOCK_DURATION_MS = 15 * 60 * 1000;
+
+const CONTROL_AND_BIDI_REGEX = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+
+function sanitizeTextInput(rawText, maxLength = MAX_TEXT_MESSAGE_LENGTH) {
+  if (typeof rawText !== 'string') return '';
+  const sanitized = rawText
+    .normalize('NFC')
+    .replace(CONTROL_AND_BIDI_REGEX, '')
+    .trim();
+  return sanitized.slice(0, maxLength);
+}
 
 const MAX_CONCURRENT_WS_PER_IP = Number(process.env.MAX_CONCURRENT_WS_PER_IP ?? 3);
 const MAX_WS_CONNECTS_PER_MINUTE = Number(process.env.MAX_WS_CONNECTS_PER_MINUTE ?? 10);
@@ -179,10 +191,10 @@ app.post('/api/admin/announcements', (request, response) => {
     return;
   }
 
-  const message = typeof request.body?.message === 'string' ? request.body.message.trim() : '';
-  if (!message || message.length > MAX_ADMIN_ANNOUNCEMENT_LENGTH) {
+  const message = sanitizeTextInput(request.body?.message, MAX_ADMIN_ANNOUNCEMENT_LENGTH);
+  if (!message) {
     response.status(400).json({
-      error: `Thông báo phải dài từ 1 đến ${MAX_ADMIN_ANNOUNCEMENT_LENGTH} ký tự.`
+      error: `Thông báo phải dài từ 1 đến ${MAX_ADMIN_ANNOUNCEMENT_LENGTH} ký tự hợp lệ.`
     });
     return;
   }
@@ -808,13 +820,13 @@ wss.on('connection', (ws, request) => {
     }
 
     if (msg.type === 'feedback') {
-      const feedback = typeof msg.data === 'string' ? msg.data.trim() : '';
-      const username = typeof msg.username === 'string' ? msg.username.trim() : '';
-      if (!feedback || feedback.length > MAX_FEEDBACK_LENGTH) {
+      const feedback = sanitizeTextInput(msg.data, MAX_FEEDBACK_LENGTH);
+      const username = sanitizeTextInput(msg.username, MAX_FEEDBACK_USERNAME_LENGTH);
+      if (!feedback) {
         safeSend(ws, {
           type: 'feedbackResult',
           ok: false,
-          message: `Góp ý phải dài từ 1 đến ${MAX_FEEDBACK_LENGTH} ký tự.`
+          message: `Góp ý phải dài từ 1 đến ${MAX_FEEDBACK_LENGTH} ký tự hợp lệ.`
         });
         return;
       }
@@ -901,7 +913,8 @@ wss.on('connection', (ws, request) => {
       return;
     }
 
-    const isTextMessage = msg.type === 'text' && typeof msg.data === 'string' && msg.data.trim().length > 0;
+    const sanitizedText = msg.type === 'text' ? sanitizeTextInput(msg.data, MAX_TEXT_MESSAGE_LENGTH) : null;
+    const isTextMessage = typeof sanitizedText === 'string' && sanitizedText.length > 0;
     const imageBytes = msg.type === 'image' && typeof msg.data === 'string'
       ? decodeImageData(msg.data)
       : null;
@@ -916,7 +929,8 @@ wss.on('connection', (ws, request) => {
         ? msg.id
         : `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const recipient = ws.partner;
-      const messageLength = isTextMessage ? Buffer.byteLength(msg.data, 'utf8') : imageBytes.length;
+      const messagePayload = isTextMessage ? sanitizedText : msg.data;
+      const messageLength = isTextMessage ? Buffer.byteLength(messagePayload, 'utf8') : imageBytes.length;
 
       if (ws.partner !== recipient || recipient.readyState !== recipient.OPEN) {
         safeSend(ws, { system: '[SYSTEM] No partner available.' });
@@ -927,7 +941,7 @@ wss.on('connection', (ws, request) => {
 
       safeSend(ws, {
         type: isTextMessage ? 'text' : 'image',
-        data: msg.data,
+        data: messagePayload,
         from: 'self',
         id: messageId,
         messageIndex: Number.isSafeInteger(msg.messageIndex) ? msg.messageIndex : undefined
@@ -935,7 +949,7 @@ wss.on('connection', (ws, request) => {
 
       safeSend(recipient, {
         type: isTextMessage ? 'text' : 'image',
-        data: msg.data,
+        data: messagePayload,
         from: 'stranger',
         id: messageId,
         messageIndex: Number.isSafeInteger(msg.messageIndex) ? msg.messageIndex : undefined
@@ -947,7 +961,7 @@ wss.on('connection', (ws, request) => {
           fromUuid: ws.session.clientId,
           toUuid: recipient.session.clientId,
           type: isTextMessage ? 'text' : 'image',
-          message: msg.data
+          message: messagePayload
         }).catch((error) => {
           chatLogger.connectionError(ws.id, error);
         });
