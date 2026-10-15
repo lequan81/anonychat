@@ -17,7 +17,9 @@ export const useTabCoordination = () => {
     }
     try {
       window.localStorage.setItem('anonychat_active_tab', tabIdRef.current);
-    } catch {}
+    } catch {
+      // Storage access blocked or unavailable in private browsing
+    }
   }, []);
 
   useEffect(() => {

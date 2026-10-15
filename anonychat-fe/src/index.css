@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+@theme {
+  --font-mono: 'Maple Mono', monospace;
+  --color-surface-bg: #08090b;
+  --color-surface-panel: #111216;
+  --color-surface-card: #181920;
+}
+
 @font-face {
   font-family: 'Maple Mono';
   src: url('/fonts/MapleMono.ttf') format('truetype');
@@ -56,6 +63,29 @@ input {
 
 .animate-chat-message {
   animation: chat-message-arrive 200ms ease-in-out both;
+}
+
+@keyframes radar-pulse {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+.animate-radar-ring-1 {
+  animation: radar-pulse 2.8s cubic-bezier(0.15, 0.85, 0.35, 1) infinite;
+}
+
+.animate-radar-ring-2 {
+  animation: radar-pulse 2.8s cubic-bezier(0.15, 0.85, 0.35, 1) infinite 0.9s;
+}
+
+.animate-radar-ring-3 {
+  animation: radar-pulse 2.8s cubic-bezier(0.15, 0.85, 0.35, 1) infinite 1.8s;
 }
 
 .easter-egg-toast-wrap {
@@ -320,6 +350,9 @@ input {
 @media (prefers-reduced-motion: reduce) {
   .animate-chat-message,
   .animate-reaction-spring,
+  .animate-radar-ring-1,
+  .animate-radar-ring-2,
+  .animate-radar-ring-3,
   .easter-egg-toast,
   .easter-egg-emoji,
   .donation-modal-backdrop,
