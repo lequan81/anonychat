@@ -35,6 +35,7 @@ const EasterEggCelebration = ({ celebration }) => (
 );
 
 const useAudio = () => {
+  const hasInteractedRef = useRef(false);
   const audioRefs = useRef({
     connect: new Audio('/sounds/activity.mp3'),
     disconnect: new Audio('/sounds/activity.mp3'),
@@ -42,16 +43,29 @@ const useAudio = () => {
     receive: new Audio('/sounds/message.mp3')
   });
 
+  useEffect(() => {
+    const markInteracted = () => {
+      hasInteractedRef.current = true;
+      window.removeEventListener('pointerdown', markInteracted);
+      window.removeEventListener('keydown', markInteracted);
+    };
+    window.addEventListener('pointerdown', markInteracted);
+    window.addEventListener('keydown', markInteracted);
+    return () => {
+      window.removeEventListener('pointerdown', markInteracted);
+      window.removeEventListener('keydown', markInteracted);
+    };
+  }, []);
+
   const playSound = useCallback((type) => {
+    if (!hasInteractedRef.current) return;
     try {
       const audio = audioRefs.current[type];
       if (audio) {
         audio.currentTime = 0;
-        audio.play().catch((e) => console.log('Audio play failed:', e));
+        audio.play().catch(() => {});
       }
-    } catch (error) {
-      console.log('Audio error:', error);
-    }
+    } catch {}
   }, []);
 
   return { playSound };
@@ -73,6 +87,17 @@ const useWebSocket = (playSound) => {
   const imageTransfersRef = useRef(new Map());
   // Map<transferId, {totalChunks, totalBytes, messageId, messageIndex, chunks: Uint8Array[], received: number}>
   const blobUrlsRef = useRef([]);
+
+  const revokeAllBlobUrls = useCallback(() => {
+    if (blobUrlsRef.current.length > 0) {
+      blobUrlsRef.current.forEach((url) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {}
+      });
+      blobUrlsRef.current = [];
+    }
+  }, []);
 
   const recordActivityEvent = useCallback((type) => {
     const count = ++activityEventCountRef.current;
@@ -295,6 +320,7 @@ const useWebSocket = (playSound) => {
           setIsUserConnected(true);
           setHasActiveConversation(true);
           if (!isReconnecting) {
+            revokeAllBlobUrls();
             setMessages([]);
             nextMessageIndexRef.current = 0;
             setActivityEventCount(0);
@@ -323,6 +349,7 @@ const useWebSocket = (playSound) => {
           setIsUserConnected(false);
           setHasActiveConversation(false);
           isReconnecting = false;
+          revokeAllBlobUrls();
         }
 
         if (msg.system?.toLowerCase().includes('connection lost')) {
@@ -332,6 +359,7 @@ const useWebSocket = (playSound) => {
         if (msg.system?.includes('disconnected')) {
           setIsUserConnected(false);
           setHasActiveConversation(false);
+          revokeAllBlobUrls();
           playSound('disconnect');
         }
 
@@ -462,15 +490,16 @@ const useWebSocket = (playSound) => {
       window.clearTimeout(reconnectTimeout);
       window.clearInterval(keepaliveInterval);
       window.clearTimeout(typingTimeoutRef.current);
+      revokeAllBlobUrls();
       if (websocket && websocket.readyState !== WebSocket.CLOSING && websocket.readyState !== WebSocket.CLOSED) {
         websocket.close();
       }
     };
-  }, [playSound, recordActivityEvent]);
+  }, [playSound, recordActivityEvent, revokeAllBlobUrls]);
 
   const sendMessage = (data) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
-      if (data.type === 'text' || data.type === 'image') {
+      if (data.type === 'text') {
         const messageIndex = nextMessageIndexRef.current++;
         ws.send(JSON.stringify({ ...data, messageIndex }));
         recordActivityEvent(data.type);
@@ -482,6 +511,76 @@ const useWebSocket = (playSound) => {
       }
     }
   };
+
+  const sendImage = useCallback(async (blob) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const messageId = `img_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    const localBlobUrl = URL.createObjectURL(blob);
+    blobUrlsRef.current.push(localBlobUrl);
+
+    const messageIndex = nextMessageIndexRef.current++;
+    const totalBytes = blob.size;
+    const CHUNK_SIZE = 64 * 1024;
+    const totalChunks = Math.ceil(totalBytes / CHUNK_SIZE);
+    const transferId = window.crypto.randomUUID();
+
+    setMessages((prev) => [
+      ...prev.filter((m) => m.type !== 'typing'),
+      {
+        id: messageId,
+        index: messageIndex,
+        originIndex: messageIndex,
+        author: 'self',
+        type: 'image',
+        data: localBlobUrl,
+        from: 'self',
+        isMine: true,
+        delivered: false,
+        reactions: { self: null, peer: null },
+        timestamp: Date.now(),
+        imageProgress: 0
+      }
+    ]);
+
+    ws.send(JSON.stringify({
+      type: 'image_start',
+      id: transferId,
+      messageId,
+      messageIndex,
+      totalChunks,
+      totalBytes
+    }));
+    recordActivityEvent('image');
+    playSound('send');
+
+    const arrayBuffer = await blob.arrayBuffer();
+    const uint8 = new Uint8Array(arrayBuffer);
+
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+      if (ws.readyState !== WebSocket.OPEN) break;
+      const start = chunkIndex * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, totalBytes);
+      const chunkData = uint8.subarray(start, end);
+
+      const buffer = new ArrayBuffer(40 + chunkData.byteLength);
+      const headerBytes = new Uint8Array(buffer, 0, 36);
+      for (let i = 0; i < 36; i++) {
+        headerBytes[i] = transferId.charCodeAt(i);
+      }
+      const view = new DataView(buffer);
+      view.setUint32(36, chunkIndex, false);
+
+      const bodyBytes = new Uint8Array(buffer, 40);
+      bodyBytes.set(chunkData);
+
+      ws.send(buffer);
+
+      const progress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
+      setMessages((prev) => prev.map((m) =>
+        m.id === messageId ? { ...m, imageProgress: progress < 100 ? progress : undefined } : m
+      ));
+    }
+  }, [ws, playSound, recordActivityEvent]);
 
   const sendReaction = (targetMessage, emoji) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -526,6 +625,7 @@ const useWebSocket = (playSound) => {
     hasActiveConversation,
     messages,
     sendMessage,
+    sendImage,
     sendReaction,
     sendFeedback,
     feedbackStatus,
@@ -539,6 +639,7 @@ const useWebSocket = (playSound) => {
 const ChatMessage = ({
   message,
   image,
+  imageProgress,
   isMine,
   delivered,
   reactions,
@@ -601,11 +702,18 @@ const ChatMessage = ({
             }`}
         >
           {image ? (
-            <img
-              src={image}
-              alt="Ảnh được gửi trong cuộc trò chuyện"
-              className="max-h-80 max-w-full rounded-lg object-contain"
-            />
+            <div className="relative overflow-hidden rounded-lg">
+              <img
+                src={image}
+                alt="Ảnh được gửi trong cuộc trò chuyện"
+                className="max-h-80 max-w-full rounded-lg object-contain"
+              />
+              {imageProgress !== undefined && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-xs font-semibold text-white">
+                  {imageProgress}%
+                </div>
+              )}
+            </div>
           ) : (
             <span className="block whitespace-pre-wrap text-left">{message}</span>
           )}
@@ -798,6 +906,7 @@ const ChatLog = ({ messages, isUserConnected, onReact }) => {
                 <ChatMessage
                   message={msg.data}
                   image={msg.type === 'image' ? msg.data : null}
+                  imageProgress={msg.imageProgress}
                   isMine={msg.isMine}
                   delivered={msg.delivered}
                   reactions={msg.reactions}
@@ -816,7 +925,7 @@ const ChatLog = ({ messages, isUserConnected, onReact }) => {
   );
 };
 
-const MessageInput = ({ onSendMessage, onTyping, onOpenAdmin, isConnected }) => {
+const MessageInput = ({ onSendMessage, onSendImage, onTyping, onOpenAdmin, isConnected }) => {
   const [message, setMessage] = useState('');
   const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [attachmentError, setAttachmentError] = useState('');
@@ -902,21 +1011,7 @@ const MessageInput = ({ onSendMessage, onTyping, onOpenAdmin, isConnected }) => 
         throw new Error('Ảnh sau khi nén vẫn vượt quá 5 MB.');
       }
 
-      const data = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(reader.error || new Error('Image reading failed'));
-        reader.readAsDataURL(blob);
-      });
-      if (typeof data !== 'string') {
-        throw new Error('Image encoding did not produce a data URL');
-      }
-
-      onSendMessage({
-        type: 'image',
-        data,
-        id: `img_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
-      });
+      onSendImage(blob);
     } catch (error) {
       console.error('Image processing failed:', error);
       setAttachmentError(error.message || 'Không thể xử lý ảnh này.');
@@ -1247,6 +1342,7 @@ const ChatApp = () => {
     hasActiveConversation,
     messages,
     sendMessage,
+    sendImage,
     sendReaction,
     onlineCount,
     activityEventCount,
@@ -1453,8 +1549,12 @@ const ChatApp = () => {
     }
   };
 
+  const [isEnding, setIsEnding] = useState(false);
   const handleEndConversation = () => {
+    if (isEnding) return;
+    setIsEnding(true);
     sendMessage({ type: 'endConversation' });
+    setTimeout(() => setIsEnding(false), 1500);
   };
 
   const handleOpenFeedback = useCallback(() => {
@@ -1515,6 +1615,7 @@ const ChatApp = () => {
         <ChatLog messages={messages} isUserConnected={isUserConnected} onReact={sendReaction} />
         <MessageInput
           onSendMessage={handleSendMessage}
+          onSendImage={sendImage}
           onTyping={handleTyping}
           onOpenAdmin={handleOpenFeedback}
           isConnected={isUserConnected}
