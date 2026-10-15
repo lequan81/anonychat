@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { cn } from '../utils/cn.js';
 
 export const OnlineCounter = React.memo(({ count }) => {
   const [prevCount, setPrevCount] = useState(count);
@@ -17,9 +18,10 @@ export const OnlineCounter = React.memo(({ count }) => {
 
   return (
     <div
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium text-zinc-300 transition-transform duration-300 ${
+      className={cn(
+        'inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium text-zinc-300 transition-transform duration-300',
         isAnimating ? 'scale-105' : 'scale-100'
-      }`}
+      )}
     >
       <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
       <span>{count ?? 0}</span>
@@ -42,11 +44,12 @@ export const ChatHeader = React.memo(({
     {/* Left: Status beacon, brand & feedback */}
     <div className="flex min-w-0 items-center gap-2">
       <span
-        className={`h-2.5 w-2.5 shrink-0 rounded-full transition-colors ${
+        className={cn(
+          'h-2.5 w-2.5 shrink-0 rounded-full transition-colors',
           isUserConnected
             ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]'
             : 'bg-zinc-500'
-        }`}
+        )}
         role="status"
         aria-label={isUserConnected ? 'Đã kết nối' : 'Đang tìm người lạ'}
       />

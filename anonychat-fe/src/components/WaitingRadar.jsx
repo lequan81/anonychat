@@ -1,36 +1,47 @@
 import React from 'react';
+import { cn } from '../utils/cn.js';
+
+const RADAR_VARIANTS = {
+  connected: {
+    ring1: 'border-emerald-500/30',
+    ring2: 'border-emerald-500/20',
+    ring3: 'border-emerald-500/15',
+    beacon: 'border-emerald-500/40 bg-emerald-950/60 text-emerald-400 shadow-emerald-950/40'
+  },
+  waiting: {
+    ring1: 'border-sky-500/25',
+    ring2: 'border-sky-500/15',
+    ring3: 'border-sky-500/10',
+    beacon: 'border-sky-500/30 bg-sky-950/50 text-sky-400 shadow-sky-950/30'
+  }
+};
 
 export const WaitingRadar = React.memo(({ isUserConnected }) => {
+  const variant = isUserConnected ? RADAR_VARIANTS.connected : RADAR_VARIANTS.waiting;
+
   return (
     <div className="flex h-full min-h-[260px] flex-col items-center justify-center p-6 text-center select-none">
       <div className="relative mb-6 flex h-24 w-24 items-center justify-center">
         {/* Concentric radar rings */}
         <span
-          className={`absolute inset-0 rounded-full border ${
-            isUserConnected ? 'border-emerald-500/30' : 'border-sky-500/25'
-          } animate-radar-ring-1`}
+          className={cn('absolute inset-0 rounded-full border animate-radar-ring-1', variant.ring1)}
           aria-hidden="true"
         />
         <span
-          className={`absolute inset-0 rounded-full border ${
-            isUserConnected ? 'border-emerald-500/20' : 'border-sky-500/15'
-          } animate-radar-ring-2`}
+          className={cn('absolute inset-0 rounded-full border animate-radar-ring-2', variant.ring2)}
           aria-hidden="true"
         />
         <span
-          className={`absolute inset-0 rounded-full border ${
-            isUserConnected ? 'border-emerald-500/15' : 'border-sky-500/10'
-          } animate-radar-ring-3`}
+          className={cn('absolute inset-0 rounded-full border animate-radar-ring-3', variant.ring3)}
           aria-hidden="true"
         />
 
         {/* Central glowing icon */}
         <div
-          className={`relative z-10 flex h-14 w-14 items-center justify-center rounded-full border shadow-lg backdrop-blur-md transition-colors duration-500 ${
-            isUserConnected
-              ? 'border-emerald-500/40 bg-emerald-950/60 text-emerald-400 shadow-emerald-950/40'
-              : 'border-sky-500/30 bg-sky-950/50 text-sky-400 shadow-sky-950/30'
-          }`}
+          className={cn(
+            'relative z-10 flex h-14 w-14 items-center justify-center rounded-full border shadow-lg backdrop-blur-md transition-colors duration-500',
+            variant.beacon
+          )}
         >
           {isUserConnected ? (
             <svg
