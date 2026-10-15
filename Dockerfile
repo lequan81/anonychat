@@ -24,7 +24,8 @@ ENV NODE_ENV=production \
 WORKDIR /app
 
 COPY --from=server-deps --chown=node:node /app/node_modules ./node_modules
-COPY --chown=node:node package.json index.js logger.js messageLog.js feedbackLog.js ./
+COPY --chown=node:node package.json ./
+COPY --chown=node:node src/ ./src/
 COPY --from=frontend-build --chown=node:node /build/public ./public
 
 RUN mkdir -p /app/logs && chown node:node /app/logs
@@ -36,4 +37,4 @@ VOLUME ["/app/logs"]
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:' + process.env.PORT + '/healthz').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
 
-CMD ["node", "index.js"]
+CMD ["node", "src/index.js"]
