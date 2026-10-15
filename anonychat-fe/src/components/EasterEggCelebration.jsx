@@ -2,12 +2,12 @@ import React from 'react';
 
 const getCelebrationMessage = ({ kind, count, intensity }) => {
   const messageIntros = ['Mới khởi động', 'Vào guồng rồi', 'Nhịp chat tăng tốc', 'Bùng nổ tin nhắn'];
-  const eventIntros = ['Mới khởi động', 'Tăng nhịp rồi', 'Server nóng lên', 'Bùng nổ sự kiện'];
+  const eventIntros = ['Mới khởi động', 'Tương tác sôi nổi', 'Nhịp độ gắn kết', 'Bùng nổ tương tác'];
   const intro = (kind === 'messages' ? messageIntros : eventIntros)[intensity - 1] || 'Chúc mừng';
 
   return kind === 'messages'
     ? `${intro} — hai bạn đã gửi ${count} tin nhắn cho nhau!`
-    : `${intro} — hai bạn đã tạo ra ${count} sự kiện sôi nổi!`;
+    : `${intro} — hai bạn đã đạt ${count} lượt tương tác cùng nhau!`;
 };
 
 export const EasterEggCelebration = React.memo(({ celebration }) => (

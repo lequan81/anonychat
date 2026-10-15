@@ -43,52 +43,40 @@ app.get("/healthz", (request, response) => {
     .type("text/plain")
     .send(isShuttingDown ? "shutting down" : "ok");
 });
-const reconnectGraceSeconds = Number(
-  process.env.RECONNECT_GRACE_SECONDS ?? 120,
-);
-const heartbeatIntervalSeconds = Number(
-  process.env.WS_HEARTBEAT_INTERVAL_SECONDS ?? 15,
-);
-const heartbeatMissedThreshold = Number(
-  process.env.WS_HEARTBEAT_MISSED_THRESHOLD ?? 3,
-);
-const pairRematchCooldownSeconds = Number(
-  process.env.PAIR_REMATCH_COOLDOWN_SECONDS ?? 15,
-);
-const messageLoggingSetting = (
-  process.env.MESSAGE_LOGGING_ENABLED ?? "true"
-).toLowerCase();
+function parsePositiveInteger(envName, fallback, min = 1) {
+  const raw = process.env[envName];
+  if (raw === undefined || raw === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < min) {
+    throw new Error(
+      `Environment variable ${envName} must be an integer >= ${min} (received: "${raw}")`
+    );
+  }
+  return parsed;
+}
 
-if (!Number.isInteger(reconnectGraceSeconds) || reconnectGraceSeconds <= 0) {
-  throw new Error("RECONNECT_GRACE_SECONDS must be a positive integer");
-}
-if (
-  !Number.isInteger(heartbeatIntervalSeconds) ||
-  heartbeatIntervalSeconds <= 0
-) {
-  throw new Error("WS_HEARTBEAT_INTERVAL_SECONDS must be a positive integer");
-}
-if (
-  !Number.isInteger(heartbeatMissedThreshold) ||
-  heartbeatMissedThreshold < 1
-) {
+function parseBoolean(envName, fallback = true) {
+  const raw = process.env[envName];
+  if (raw === undefined || raw === "") return fallback;
+  const normalized = String(raw).trim().toLowerCase();
+  if (normalized === "true" || normalized === "1") return true;
+  if (normalized === "false" || normalized === "0") return false;
   throw new Error(
-    "WS_HEARTBEAT_MISSED_THRESHOLD must be a positive integer >= 1",
+    `Environment variable ${envName} must be a boolean ('true' or 'false', received: "${raw}")`
   );
 }
-if (
-  !Number.isInteger(pairRematchCooldownSeconds) ||
-  pairRematchCooldownSeconds <= 0
-) {
-  throw new Error("PAIR_REMATCH_COOLDOWN_SECONDS must be a positive integer");
-}
-if (messageLoggingSetting !== "true" && messageLoggingSetting !== "false") {
-  throw new Error("MESSAGE_LOGGING_ENABLED must be true or false");
-}
+
+const reconnectGraceSeconds = parsePositiveInteger("RECONNECT_GRACE_SECONDS", 120);
+const heartbeatIntervalSeconds = parsePositiveInteger("WS_HEARTBEAT_INTERVAL_SECONDS", 15);
+const heartbeatMissedThreshold = parsePositiveInteger("WS_HEARTBEAT_MISSED_THRESHOLD", 3);
+const pairRematchCooldownSeconds = parsePositiveInteger("PAIR_REMATCH_COOLDOWN_SECONDS", 15);
+const MESSAGE_LOGGING_ENABLED = parseBoolean("MESSAGE_LOGGING_ENABLED", true);
+const MAX_CONCURRENT_WS_PER_IP = parsePositiveInteger("MAX_CONCURRENT_WS_PER_IP", 3);
+const MAX_WS_CONNECTS_PER_MINUTE = parsePositiveInteger("MAX_WS_CONNECTS_PER_MINUTE", 10);
+
 const RECONNECT_GRACE_MS = reconnectGraceSeconds * 1000;
 const WS_HEARTBEAT_INTERVAL_MS = heartbeatIntervalSeconds * 1000;
 const PAIR_REMATCH_COOLDOWN_MS = pairRematchCooldownSeconds * 1000;
-const MESSAGE_LOGGING_ENABLED = messageLoggingSetting === "true";
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_TEXT_MESSAGE_LENGTH = 2000;
 const MAX_FEEDBACK_LENGTH = 2000;
@@ -113,12 +101,6 @@ function sanitizeTextInput(rawText, maxLength = MAX_TEXT_MESSAGE_LENGTH) {
   return sanitized.slice(0, maxLength);
 }
 
-const MAX_CONCURRENT_WS_PER_IP = Number(
-  process.env.MAX_CONCURRENT_WS_PER_IP ?? 3,
-);
-const MAX_WS_CONNECTS_PER_MINUTE = Number(
-  process.env.MAX_WS_CONNECTS_PER_MINUTE ?? 10,
-);
 const wsConnectionsByIp = new Map(); // ip -> Set<ws>
 const wsConnectTimestampsByIp = new Map(); // ip -> number[]
 

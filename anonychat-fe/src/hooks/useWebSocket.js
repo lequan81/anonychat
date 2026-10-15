@@ -5,9 +5,7 @@ export const ACTIVITY_MILESTONES = [10, 25, 50, 100, 250, 500, 1000];
 export const EVENT_ICONS = {
   text: '💬',
   image: '🖼️',
-  reaction: '💟',
-  typing: '⌨️',
-  receipt: '📬'
+  reaction: '💟'
 };
 
 export const useWebSocket = (playSound, enabled = true) => {
@@ -150,7 +148,6 @@ export const useWebSocket = (playSound, enabled = true) => {
 
             if (transfer.messageId && websocket.readyState === WebSocket.OPEN) {
               websocket.send(JSON.stringify({ type: 'receipt', messageId: transfer.messageId }));
-              recordActivityEvent('receipt');
             }
           }
           return;
@@ -231,7 +228,6 @@ export const useWebSocket = (playSound, enabled = true) => {
         }
 
         if (msg.type === 'receipt') {
-          recordActivityEvent('receipt');
           setMessages((prev) => prev.map((m) => (m.id === msg.messageId ? { ...m, delivered: true } : m)));
           return;
         }
@@ -338,7 +334,6 @@ export const useWebSocket = (playSound, enabled = true) => {
                 messageId: msg.id
               })
             );
-            recordActivityEvent('receipt');
           }
 
           window.clearTimeout(typingTimeoutRef.current);
@@ -350,7 +345,6 @@ export const useWebSocket = (playSound, enabled = true) => {
         }
 
         if (msg.type === 'typing') {
-          recordActivityEvent('typing');
           window.clearTimeout(typingTimeoutRef.current);
           setMessages((prev) => (
             prev.some((item) => item.type === 'typing')
@@ -449,9 +443,6 @@ export const useWebSocket = (playSound, enabled = true) => {
         recordActivityEvent(data.type);
       } else {
         ws.send(JSON.stringify(data));
-        if (data.type === 'typing') {
-          recordActivityEvent('typing');
-        }
       }
     }
   }, [ws, recordActivityEvent]);
