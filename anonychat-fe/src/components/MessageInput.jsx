@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { compressImage } from '../utils/imageCompressor.js';
 
 export const MessageInput = React.memo(({
   onSendMessage,
@@ -49,55 +50,16 @@ export const MessageInput = React.memo(({
 
   const processImage = async (file) => {
     setAttachmentError('');
-    if (!file) return;
-    if (!isConnected || isProcessingImage) return;
-
-    if (!file.type.startsWith('image/')) {
-      setAttachmentError('Chỉ hỗ trợ tệp hình ảnh.');
-      return;
-    }
-
-    if (file.size > 20 * 1024 * 1024) {
-      setAttachmentError('Ảnh gốc phải nhỏ hơn 20 MB.');
-      return;
-    }
+    if (!file || !isConnected || isProcessingImage) return;
 
     setIsProcessingImage(true);
-    let bitmap;
-
     try {
-      bitmap = await createImageBitmap(file);
-      const longestSide = Math.max(bitmap.width, bitmap.height);
-      const scale = Math.min(1, 1600 / longestSide);
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-
-      const context = canvas.getContext('2d');
-      if (!context) throw new Error('Không thể khởi tạo Canvas context.');
-
-      context.fillStyle = '#fff';
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-
-      const blob = await new Promise((resolve, reject) => {
-        canvas.toBlob(
-          (result) => (result ? resolve(result) : reject(new Error('Mã hoá ảnh thất bại'))),
-          'image/jpeg',
-          0.82
-        );
-      });
-
-      if (blob.size > 5 * 1024 * 1024) {
-        throw new Error('Ảnh sau khi nén vẫn vượt quá 5 MB.');
-      }
-
+      const blob = await compressImage(file);
       onSendImage(blob);
     } catch (error) {
       console.error('Image processing failed:', error);
       setAttachmentError(error.message || 'Không thể xử lý ảnh này.');
     } finally {
-      bitmap?.close();
       setIsProcessingImage(false);
     }
   };
